@@ -1,0 +1,52 @@
+# TDA for Audio Deepfake Detection - Requirements
+# Python 3.10+ required
+
+# Core data processing
+numpy>=1.20.0
+pandas>=1.3.0
+matplotlib>=3.4.0
+
+# Audio feature extraction (REQUIRED)
+librosa>=0.10.0
+
+# Voice quality features via Praat bindings (REQUIRED for jitter/shimmer/HNR/formants)
+praat-parselmouth>=0.4.3
+
+# Persistent homology - primary engine (REQUIRED)
+ripser>=0.6.0
+
+# GUDHI - secondary PH engine + cubical complexes (REQUIRED)
+gudhi>=3.8.0
+
+# Topological vectorization (REQUIRED)
+giotto-tda>=0.6.0
+
+# Alternative persistence image computation
+persim>=0.3.0
+
+# Classification and evaluation
+scikit-learn>=1.3.0
+
+# Statistical analysis
+scipy>=1.7.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Visualization enhancement
+seaborn>=0.11.0
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
+
+# Installation:
+# pip install -r requirements.txt
+
+# Notes:
+# - librosa handles MFCCs, delta/delta-delta computation, F0, spectral flux
+# - praat-parselmouth is REQUIRED for jitter, shimmer, HNR, and formant extraction
+# - ripser is the core TDA engine; C++ backend makes it tractable on 500-3000 point clouds
+# - giotto-tda provides sklearn-compatible persistence images and landscapes
+# - scipy is needed for Wasserstein distance comparisons between persistence diagrams

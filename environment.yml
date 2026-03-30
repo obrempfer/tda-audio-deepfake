@@ -1,0 +1,66 @@
+name: tda-audio-deepfake
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python>=3.10
+
+  # Core data processing
+  - numpy>=1.20.0
+  - pandas>=1.3.0
+  - matplotlib>=3.4.0
+
+  # Audio feature extraction (required)
+  - pip>=21.0
+  - pip:
+      # Audio processing
+      - librosa>=0.10.0
+
+      # Voice quality features (jitter, shimmer, HNR, formants via Praat)
+      - praat-parselmouth>=0.4.3
+
+      # Persistent homology (core TDA engine)
+      - ripser>=0.6.0
+
+      # GUDHI: alternative PH + cubical complexes
+      - gudhi>=3.8.0
+
+      # Topological vectorization (persistence images, landscapes)
+      - giotto-tda>=0.6.0
+
+      # Alternative vectorization
+      - persim>=0.3.0
+
+      # Classification and evaluation
+      - scikit-learn>=1.3.0
+
+      # Statistical analysis
+      - scipy>=1.7.0
+
+      # Data validation
+      - pydantic>=2.0.0
+
+      # Visualization enhancement
+      - seaborn>=0.11.0
+
+      # Jupyter support
+      - jupyter>=1.0.0
+      - ipykernel>=6.0.0
+
+# Notes:
+# - librosa is the primary audio feature extraction library (MFCCs, delta/delta-delta, F0, spectral flux)
+# - praat-parselmouth provides Python bindings for Praat: jitter, shimmer, HNR, formant frequencies
+# - ripser is the primary PH engine for Vietoris-Rips computation (efficient C++ backend)
+# - gudhi is the secondary PH engine; also supports cubical complexes on spectrograms
+# - giotto-tda provides sklearn-compatible persistence image and landscape vectorization
+# - persim is a lightweight alternative for persistence image computation
+# - scikit-learn provides SVM, logistic regression, and evaluation utilities
+# - scipy enables Wasserstein/bottleneck distance computations and statistical tests
+#
+# Installation:
+# conda env create -f environment.yml
+# conda activate tda-audio-deepfake
+#
+# Update existing environment:
+# conda env update -f environment.yml --prune

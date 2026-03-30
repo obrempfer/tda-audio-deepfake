@@ -1,0 +1,150 @@
+"""Configuration for the TDA audio deepfake detection pipeline.
+
+Each config class corresponds to a pipeline stage. Modify class
+attributes directly or call the helper functions at runtime.
+"""
+
+from typing import Optional
+
+
+class AudioConfig:
+    """Audio loading and framing parameters.
+
+    Attributes:
+        SAMPLE_RATE: Target sample rate for all audio (Hz).
+        WINDOW_SIZE_MS: STFT window length in milliseconds.
+        HOP_SIZE_MS: STFT hop length in milliseconds.
+        N_MFCC: Number of MFCC coefficients (static layer).
+        INCLUDE_DELTA: Whether to append first-derivative MFCCs.
+        INCLUDE_DELTA2: Whether to append second-derivative MFCCs.
+    """
+    SAMPLE_RATE: int = 16000
+    WINDOW_SIZE_MS: float = 25.0
+    HOP_SIZE_MS: float = 10.0
+    N_MFCC: int = 13
+    INCLUDE_DELTA: bool = True
+    INCLUDE_DELTA2: bool = True
+
+
+class FeatureConfig:
+    """Optional additional feature dimensions.
+
+    These are off by default for the minimal class project (39-dim MFCC only).
+    Enable selectively to add physically motivated dimensions.
+
+    Attributes:
+        INCLUDE_F0: Include fundamental frequency (F0) and slope.
+        INCLUDE_JITTER_SHIMMER: Include jitter, shimmer, HNR via Praat.
+        INCLUDE_FORMANTS: Include F1–F3 formant frequencies and bandwidths.
+        INCLUDE_SPECTRAL_FLUX: Include frame-to-frame spectral change.
+        N_FORMANTS: Number of formants to extract (max 3 recommended).
+    """
+    INCLUDE_F0: bool = False
+    INCLUDE_JITTER_SHIMMER: bool = False
+    INCLUDE_FORMANTS: bool = False
+    INCLUDE_SPECTRAL_FLUX: bool = False
+    N_FORMANTS: int = 3
+
+
+class TopologyConfig:
+    """Persistent homology computation parameters.
+
+    Attributes:
+        MAX_HOMOLOGY_DIM: Highest homological dimension to compute (0=H0, 1=H1).
+        DISTANCE_METRIC: Distance metric for Vietoris-Rips ('euclidean' or 'precomputed').
+        MAX_EDGE_LENGTH: Maximum filtration value (None = auto).
+        COEFF: Coefficient field for homology computation.
+    """
+    MAX_HOMOLOGY_DIM: int = 1
+    DISTANCE_METRIC: str = "euclidean"
+    MAX_EDGE_LENGTH: Optional[float] = None
+    COEFF: int = 2
+
+
+class VectorizationConfig:
+    """Persistence diagram vectorization parameters.
+
+    Attributes:
+        METHOD: Vectorization method ('persistence_image' or 'landscape').
+        PI_N_BINS: Grid resolution for persistence images (n_bins x n_bins).
+        PI_SIGMA: Gaussian kernel bandwidth for persistence images.
+        PI_WEIGHT: Weight function ('linear' or 'persistence').
+        LANDSCAPE_N_LAYERS: Number of landscape layers to compute.
+        LANDSCAPE_N_BINS: Resolution of each landscape layer.
+    """
+    METHOD: str = "persistence_image"
+    PI_N_BINS: int = 20
+    PI_SIGMA: float = 0.1
+    PI_WEIGHT: str = "linear"
+    LANDSCAPE_N_LAYERS: int = 5
+    LANDSCAPE_N_BINS: int = 100
+
+
+class ClassifierConfig:
+    """Classifier training parameters.
+
+    Attributes:
+        MODEL: Classifier type ('svm' or 'logistic').
+        SVM_KERNEL: SVM kernel type.
+        SVM_C: SVM regularization parameter.
+        CV_FOLDS: Number of cross-validation folds.
+        RANDOM_STATE: Random seed for reproducibility.
+    """
+    MODEL: str = "svm"
+    SVM_KERNEL: str = "rbf"
+    SVM_C: float = 1.0
+    CV_FOLDS: int = 5
+    RANDOM_STATE: int = 42
+
+
+class AblationConfig:
+    """Dimensional ablation configuration.
+
+    Feature groups are defined as named slices of the embedding vector.
+    The groups should be updated to match the actual embedding dimensionality.
+
+    Attributes:
+        FEATURE_GROUPS: Dict mapping group name → list of dimension indices.
+        ANOMALY_SCORE_THRESHOLD: Minimum anomaly score to trigger ablation.
+    """
+    FEATURE_GROUPS: dict = {
+        "mfcc_static": list(range(0, 13)),
+        "mfcc_delta": list(range(13, 26)),
+        "mfcc_delta2": list(range(26, 39)),
+        # Extended groups (populated at runtime when optional features are enabled)
+        # "f0": [...],
+        # "jitter_shimmer_hnr": [...],
+        # "formants": [...],
+        # "spectral_flux": [...],
+    }
+    ANOMALY_SCORE_THRESHOLD: float = 0.5
+
+
+# Runtime configuration helpers
+
+def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = None) -> None:
+    """Update AudioConfig at runtime.
+
+    Args:
+        sample_rate: Override target sample rate.
+        n_mfcc: Override number of MFCC coefficients.
+    """
+    if sample_rate is not None:
+        AudioConfig.SAMPLE_RATE = sample_rate
+    if n_mfcc is not None:
+        AudioConfig.N_MFCC = n_mfcc
+
+
+def load_config_from_yaml(yaml_path: str) -> None:
+    """Load configuration from YAML file (future enhancement).
+
+    Args:
+        yaml_path: Path to YAML configuration file.
+
+    Note:
+        Placeholder — not yet implemented.
+    """
+    raise NotImplementedError(
+        "YAML configuration loading is not yet implemented. "
+        "Modify class attributes directly or use configure_audio()."
+    )

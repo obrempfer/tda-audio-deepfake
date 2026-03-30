@@ -1,0 +1,110 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE settings
+.vscode/
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+
+# mypy / pytype
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Ruff / Cursor
+.ruff_cache/
+.cursorignore
+.cursorindexingignore
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# Project-specific: raw dataset (large — download separately from ASVspoof)
+data/raw/*/
+!data/raw/.gitkeep
+
+# Extracted feature matrices (can be regenerated)
+data/features/*/
+!data/features/.gitkeep
+
+# Results / outputs (can be regenerated)
+data/results/*/
+!data/results/.gitkeep
+
+# Model checkpoints / serialized classifiers
+models/
+*.pkl
+*.joblib
+
+# Audio files
+*.wav
+*.flac
+*.mp3
+*.ogg
+
+# Persistence diagram caches
+*.pd
+*.barcode
+
+# Build artifacts
+.pybuilder/
+target/
