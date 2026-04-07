@@ -29,8 +29,11 @@ dependencies:
       # Topological vectorization (persistence images, landscapes)
       - giotto-tda>=0.6.0
 
-      # Alternative vectorization
-      - persim>=0.3.0
+      # Alternative vectorization (pin to 0.3.0 — newer API broke PersImage.transform)
+      - persim==0.3.0
+
+      # YAML configuration support
+      - pyyaml>=6.0
 
       # Classification and evaluation
       - scikit-learn>=1.3.0

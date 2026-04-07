@@ -123,18 +123,22 @@ def extract_features(
     return feature_matrix.astype(np.float64)
 
 
-def build_point_cloud(feature_matrix: npt.NDArray) -> npt.NDArray:
+def build_point_cloud(feature_matrix: npt.NDArray, max_points: Optional[int] = 300) -> npt.NDArray:
     """Return the feature matrix as a point cloud for PH computation.
 
-    Currently a pass-through; may add optional standardization or
-    dimensionality reduction in future.
+    Subsamples uniformly to at most max_points rows to keep Ripser tractable
+    on long utterances (PH runtime scales super-linearly with n_points).
 
     Args:
         feature_matrix: Output of extract_features(), shape (n_frames, n_dims).
+        max_points: Maximum number of points to retain. None disables subsampling.
 
     Returns:
         Point cloud array of shape (n_points, n_dims).
     """
+    if max_points is not None and len(feature_matrix) > max_points:
+        indices = np.linspace(0, len(feature_matrix) - 1, max_points, dtype=int)
+        return feature_matrix[indices]
     return feature_matrix
 
 

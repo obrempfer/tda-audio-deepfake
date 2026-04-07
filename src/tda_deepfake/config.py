@@ -6,6 +6,8 @@ attributes directly or call the helper functions at runtime.
 
 from typing import Optional
 
+import yaml
+
 
 class AudioConfig:
     """Audio loading and framing parameters.
@@ -136,15 +138,40 @@ def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = N
 
 
 def load_config_from_yaml(yaml_path: str) -> None:
-    """Load configuration from YAML file (future enhancement).
+    """Load configuration from a YAML file and update config class attributes.
+
+    Supported top-level keys: audio, feature, topology, vectorization, classifier, ablation.
+    Each key maps to a dict of attribute names (lowercase) and their values.
 
     Args:
         yaml_path: Path to YAML configuration file.
 
-    Note:
-        Placeholder — not yet implemented.
+    Example YAML::
+
+        audio:
+          sample_rate: 16000
+          n_mfcc: 13
+        topology:
+          max_homology_dim: 1
     """
-    raise NotImplementedError(
-        "YAML configuration loading is not yet implemented. "
-        "Modify class attributes directly or use configure_audio()."
-    )
+    _KEY_MAP = {
+        "audio": AudioConfig,
+        "feature": FeatureConfig,
+        "topology": TopologyConfig,
+        "vectorization": VectorizationConfig,
+        "classifier": ClassifierConfig,
+        "ablation": AblationConfig,
+    }
+    with open(yaml_path, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    if not cfg:
+        return
+
+    for section, cls in _KEY_MAP.items():
+        if section not in cfg:
+            continue
+        for key, value in cfg[section].items():
+            attr = key.upper()
+            if hasattr(cls, attr):
+                setattr(cls, attr, value)

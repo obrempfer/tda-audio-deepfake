@@ -6,8 +6,10 @@ for training, cross-validation, and inference.
 
 import numpy as np
 import numpy.typing as npt
-from typing import Literal, Optional
+from pathlib import Path
+from typing import Literal, Optional, Union
 
+import joblib
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
@@ -138,3 +140,25 @@ class Classifier:
             "report": classification_report(y, y_pred, target_names=["real", "fake"]),
             "auc": roc_auc_score(y, y_proba),
         }
+
+    def save(self, path: Union[str, Path]) -> None:
+        """Serialize the fitted pipeline to disk.
+
+        Args:
+            path: File path for the saved model (e.g. 'model.pkl').
+        """
+        joblib.dump(self.pipeline, path)
+
+    @classmethod
+    def load(cls, path: Union[str, Path]) -> "Classifier":
+        """Load a previously saved pipeline from disk.
+
+        Args:
+            path: Path to the saved model file.
+
+        Returns:
+            Classifier instance with the loaded pipeline.
+        """
+        obj = cls.__new__(cls)
+        obj.pipeline = joblib.load(path)
+        return obj

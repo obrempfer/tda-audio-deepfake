@@ -9,14 +9,17 @@ Supported methods:
 - statistics: Total persistence, max persistence, diagram entropy
 """
 
+import collections
+import collections.abc
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
-from typing import Literal
 
 from ..config import VectorizationConfig
 
 try:
-    from gtda.diagrams import PersistenceImage, PersistenceLandscape, PersistenceEntropy
+    from gtda.diagrams import PersistenceImage, PersistenceLandscape
     GIOTTO_AVAILABLE = True
 except ImportError:
     GIOTTO_AVAILABLE = False
@@ -67,12 +70,16 @@ def _persistence_image_vector(
     n_bins: int,
     sigma: float,
 ) -> npt.NDArray:
-    """Vectorize diagrams via persistence images (persim fallback)."""
+    """Vectorize diagrams via persistence images."""
     if not PERSIM_AVAILABLE and not GIOTTO_AVAILABLE:
         raise ImportError(
             "persim or giotto-tda is required for persistence images. "
             "pip install persim  OR  pip install giotto-tda"
         )
+
+    if GIOTTO_AVAILABLE:
+        return _giotto_persistence_image_vector(diagrams, n_bins=n_bins, sigma=sigma)
+
     vectors = []
     pim = PersImage(spread=sigma, pixels=(n_bins, n_bins), verbose=False)
     for dgm in diagrams:
@@ -80,8 +87,32 @@ def _persistence_image_vector(
         if len(finite) == 0:
             vectors.append(np.zeros(n_bins * n_bins))
         else:
+            # persim 0.3.0 still references collections.Iterable, which moved
+            # to collections.abc in modern Python.
+            if not hasattr(collections, "Iterable"):
+                collections.Iterable = collections.abc.Iterable
             img = pim.transform(finite)
             vectors.append(img.flatten())
+    return np.concatenate(vectors)
+
+
+def _giotto_persistence_image_vector(
+    diagrams: list[npt.NDArray],
+    n_bins: int,
+    sigma: float,
+) -> npt.NDArray:
+    """Vectorize diagrams with giotto-tda, keeping one block per homology dimension."""
+    vectors = []
+    for dgm in diagrams:
+        finite = dgm[~np.isinf(dgm[:, 1])]
+        if len(finite) == 0:
+            vectors.append(np.zeros(n_bins * n_bins))
+            continue
+
+        batch = np.column_stack([finite, np.zeros(len(finite))])[np.newaxis]
+        pi = PersistenceImage(sigma=sigma, n_bins=n_bins)
+        img = pi.fit_transform(batch)
+        vectors.append(img.flatten())
     return np.concatenate(vectors)
 
 

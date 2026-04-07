@@ -1,19 +1,23 @@
 """CLI entry point: run the full TDA detection pipeline.
 
-Usage:
-    python -m scripts.run_pipeline --help
-    python -m scripts.run_pipeline --protocol data/raw/ASVspoof2019_LA/ASVspoof2019.LA.cm.train.trn.txt \
+Usage (CV-only mode — quick experiments on a single split):
+    python -m scripts.run_pipeline \
+        --protocol data/raw/ASVspoof2019_LA/ASVspoof2019.LA.cm.train.trn.txt \
         --audio-dir data/raw/ASVspoof2019_LA/ASVspoof2019_LA_train/flac \
-        --out-dir data/results/run_01
+        --out-dir data/results/run_01 \
+        --method statistics --model svm --max-samples 500
 
-Options:
-    --protocol      Path to ASVspoof 2019 LA protocol file.
-    --audio-dir     Directory containing .flac audio files.
-    --out-dir       Output directory for results and ablation reports.
-    --max-samples   Maximum number of samples to process (default: all).
-    --method        Vectorization method: persistence_image, landscape, statistics (default: persistence_image).
-    --model         Classifier: svm or logistic (default: svm).
-    --ablation      Run dimensional ablation on flagged samples (flag).
+Usage (train/eval mode — full experiment):
+    python -m scripts.run_pipeline \
+        --train-protocol data/raw/ASVspoof2019_LA/ASVspoof2019.LA.cm.train.trn.txt \
+        --train-audio-dir data/raw/ASVspoof2019_LA/ASVspoof2019_LA_train/flac \
+        --eval-protocol data/raw/ASVspoof2019_LA/ASVspoof2019.LA.cm.dev.trl.txt \
+        --eval-audio-dir data/raw/ASVspoof2019_LA/ASVspoof2019_LA_dev/flac \
+        --out-dir data/results/baseline_dev \
+        --method persistence_image --n-bins 20 --model svm
+
+Feature vectors are cached per utterance under <out-dir>/feature_cache/.
+Re-runs with the same --method and --n-bins skip extraction entirely.
 """
 
 import argparse
@@ -25,25 +29,202 @@ from tda_deepfake.utils import load_audio, load_asvspoof_manifest
 from tda_deepfake.features import extract_features, build_point_cloud
 from tda_deepfake.topology import compute_persistence, vectorize_diagrams
 from tda_deepfake.classification import Classifier
-from tda_deepfake.ablation import AblationAnalyzer
+from tda_deepfake.config import (
+    AudioConfig,
+    ClassifierConfig,
+    FeatureConfig,
+    TopologyConfig,
+    VectorizationConfig,
+    load_config_from_yaml,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TDA Audio Deepfake Detection Pipeline")
-    parser.add_argument("--protocol", type=Path, required=True, help="ASVspoof protocol file")
-    parser.add_argument("--audio-dir", type=Path, required=True, help="Directory of .flac files")
-    parser.add_argument("--out-dir", type=Path, default=Path("data/results/default"), help="Output directory")
-    parser.add_argument("--max-samples", type=int, default=None, help="Cap on number of samples")
-    parser.add_argument("--method", default="persistence_image",
-                        choices=["persistence_image", "landscape", "statistics"])
-    parser.add_argument("--model", default="svm", choices=["svm", "logistic"])
-    parser.add_argument("--ablation", action="store_true", help="Run ablation on flagged samples")
+
+    # CV-only mode
+    parser.add_argument("--protocol", type=Path, default=None,
+                        help="ASVspoof protocol file (CV-only mode)")
+    parser.add_argument("--audio-dir", type=Path, default=None,
+                        help="Directory of .flac files (CV-only mode)")
+
+    # Train/eval mode
+    parser.add_argument("--train-protocol", type=Path, default=None,
+                        help="Train protocol file (enables train/eval mode)")
+    parser.add_argument("--train-audio-dir", type=Path, default=None)
+    parser.add_argument("--eval-protocol", type=Path, default=None,
+                        help="Eval/dev protocol file")
+    parser.add_argument("--eval-audio-dir", type=Path, default=None)
+
+    # Shared options
+    parser.add_argument("--out-dir", type=Path, default=Path("data/results/default"),
+                        help="Output directory for results")
+    parser.add_argument("--max-samples", type=int, default=None,
+                        help="Cap on number of samples (useful for quick smoke tests)")
+    parser.add_argument("--method", default=None,
+                        choices=["persistence_image", "landscape", "statistics"],
+                        help="Vectorization method")
+    parser.add_argument("--model", default=None, choices=["svm", "logistic"],
+                        help="Classifier type")
+    parser.add_argument("--n-bins", type=int, default=None,
+                        help="Persistence image grid resolution (n_bins x n_bins)")
+    parser.add_argument("--max-points", type=int, default=None,
+                        help="Max point cloud size per utterance (subsampled uniformly)")
+    parser.add_argument("--config", type=Path, default=None,
+                        help="Optional YAML config file to override defaults")
+    parser.add_argument("--ablation", action="store_true",
+                        help="Run dimensional ablation on flagged samples (not yet wired)")
     return parser.parse_args()
+
+
+def _extract_split(
+    samples: list,
+    cache_dir: Path,
+    method: str,
+    n_bins: int,
+    max_points: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract (or load from cache) feature vectors for a list of samples.
+
+    Args:
+        samples: List of (audio_path, label) pairs.
+        cache_dir: Directory for .npy cache files.
+        method: Vectorization method passed to vectorize_diagrams().
+        n_bins: Grid resolution for persistence images.
+        max_points: Maximum point cloud size (subsampled if exceeded).
+
+    Returns:
+        (X, y) numpy arrays.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    X_list, y_list = [], []
+
+    for i, (audio_path, label) in enumerate(samples):
+        if i % 100 == 0:
+            print(f"  [{i}/{len(samples)}] {audio_path.name}")
+
+        cache_file = cache_dir / f"{audio_path.stem}_{method}_{n_bins}.npy"
+        if cache_file.exists():
+            vec = np.load(cache_file)
+        else:
+            audio = load_audio(audio_path, sample_rate=AudioConfig.SAMPLE_RATE)
+            features = extract_features(
+                audio,
+                sample_rate=AudioConfig.SAMPLE_RATE,
+                include_delta=AudioConfig.INCLUDE_DELTA,
+                include_delta2=AudioConfig.INCLUDE_DELTA2,
+                include_f0=FeatureConfig.INCLUDE_F0,
+                include_jitter_shimmer=FeatureConfig.INCLUDE_JITTER_SHIMMER,
+                include_formants=FeatureConfig.INCLUDE_FORMANTS,
+                include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
+            )
+            point_cloud = build_point_cloud(features, max_points=max_points)
+            diagrams = compute_persistence(
+                point_cloud,
+                max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
+                metric=TopologyConfig.DISTANCE_METRIC,
+                max_edge_length=TopologyConfig.MAX_EDGE_LENGTH,
+                coeff=TopologyConfig.COEFF,
+            )
+            vec = vectorize_diagrams(
+                diagrams,
+                method=method,
+                n_bins=n_bins,
+                sigma=VectorizationConfig.PI_SIGMA,
+            )
+            np.save(cache_file, vec)
+
+        X_list.append(vec)
+        y_list.append(label)
+
+    return np.stack(X_list), np.array(y_list)
 
 
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.config is not None:
+        print(f"Loading config from {args.config}")
+        load_config_from_yaml(str(args.config))
+
+    method = args.method or VectorizationConfig.METHOD
+    model = args.model or ClassifierConfig.MODEL
+    n_bins = args.n_bins or VectorizationConfig.PI_N_BINS
+    max_points = args.max_points or 300
+
+    cache_dir = args.out_dir / "feature_cache"
+
+    # ------------------------------------------------------------------ #
+    # Mode B: train/eval                                                   #
+    # ------------------------------------------------------------------ #
+    if args.train_protocol is not None:
+        if args.train_audio_dir is None or args.eval_protocol is None or args.eval_audio_dir is None:
+            raise ValueError(
+                "--train-protocol requires --train-audio-dir, --eval-protocol, and --eval-audio-dir"
+            )
+
+        print(f"Loading train samples from {args.train_protocol}...")
+        train_samples = list(load_asvspoof_manifest(args.train_protocol, args.train_audio_dir))
+        if args.max_samples:
+            train_samples = train_samples[: args.max_samples]
+
+        print(f"Extracting features for {len(train_samples)} train samples...")
+        X_train, y_train = _extract_split(
+            train_samples, cache_dir / "train", method, n_bins, max_points
+        )
+
+        print(f"Loading eval samples from {args.eval_protocol}...")
+        eval_samples = list(load_asvspoof_manifest(args.eval_protocol, args.eval_audio_dir))
+
+        print(f"Extracting features for {len(eval_samples)} eval samples...")
+        X_eval, y_eval = _extract_split(
+            eval_samples, cache_dir / "eval", method, n_bins, max_points
+        )
+
+        print("Training classifier...")
+        clf = Classifier(
+            model=model,
+            svm_kernel=ClassifierConfig.SVM_KERNEL,
+            svm_c=ClassifierConfig.SVM_C,
+            random_state=ClassifierConfig.RANDOM_STATE,
+        )
+        clf.fit(X_train, y_train)
+        clf.save(args.out_dir / "model.pkl")
+        print(f"Model saved to {args.out_dir / 'model.pkl'}")
+
+        print("Evaluating on eval set...")
+        eval_results = clf.evaluate(X_eval, y_eval)
+        print(f"Eval AUC: {eval_results['auc']:.4f}")
+        print(eval_results["report"])
+
+        metrics = {
+            "auc": float(eval_results["auc"]),
+            "n_train": len(y_train),
+            "n_eval": len(y_eval),
+            "n_bonafide_eval": int(np.sum(y_eval == 0)),
+            "n_spoof_eval": int(np.sum(y_eval == 1)),
+            "config": {
+                "method": method,
+                "model": model,
+                "n_bins": n_bins,
+                "max_points": max_points,
+            },
+        }
+        with open(args.out_dir / "eval_results.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+        with open(args.out_dir / "eval_report.txt", "w") as f:
+            f.write(eval_results["report"])
+
+        print(f"Results saved to {args.out_dir}")
+        return
+
+    # ------------------------------------------------------------------ #
+    # Mode A: CV-only                                                      #
+    # ------------------------------------------------------------------ #
+    if args.protocol is None or args.audio_dir is None:
+        raise ValueError("Provide either --protocol + --audio-dir (CV mode) or "
+                         "--train-protocol + --train-audio-dir + --eval-protocol + --eval-audio-dir")
 
     print(f"Loading samples from {args.protocol}...")
     samples = list(load_asvspoof_manifest(args.protocol, args.audio_dir))
@@ -51,26 +232,19 @@ def main() -> None:
         samples = samples[: args.max_samples]
 
     print(f"Extracting features for {len(samples)} samples...")
-    X_list, y_list = [], []
-    for audio_path, label in samples:
-        audio = load_audio(audio_path)
-        features = extract_features(audio)
-        point_cloud = build_point_cloud(features)
-        diagrams = compute_persistence(point_cloud)
-        vec = vectorize_diagrams(diagrams, method=args.method)
-        X_list.append(vec)
-        y_list.append(label)
-
-    X = np.stack(X_list)
-    y = np.array(y_list)
+    X, y = _extract_split(samples, cache_dir, method, n_bins, max_points)
 
     print("Running cross-validation...")
-    clf = Classifier(model=args.model)
-    cv_results = clf.cross_validate(X, y)
+    clf = Classifier(
+        model=model,
+        svm_kernel=ClassifierConfig.SVM_KERNEL,
+        svm_c=ClassifierConfig.SVM_C,
+        random_state=ClassifierConfig.RANDOM_STATE,
+    )
+    cv_results = clf.cross_validate(X, y, n_folds=ClassifierConfig.CV_FOLDS)
     print(f"CV accuracy: {cv_results['accuracy_mean']:.3f} ± {cv_results['accuracy_std']:.3f}")
     print(f"CV AUC:      {cv_results['auc_mean']:.3f} ± {cv_results['auc_std']:.3f}")
 
-    # Save CV results
     with open(args.out_dir / "cv_results.json", "w") as f:
         json.dump(cv_results, f, indent=2)
 
