@@ -7,7 +7,8 @@ numpy/ripser/scikit-learn installed (no persim or giotto-tda required).
 import numpy as np
 import pytest
 
-from scripts.run_pipeline import _subsample_samples
+from scripts.run_pipeline import _feature_cache_key, _subsample_samples
+from tda_deepfake.config import FeatureConfig
 from tda_deepfake.features.extraction import extract_features, build_point_cloud
 from tda_deepfake.topology.persistent_homology import compute_persistence
 from tda_deepfake.topology.vectorization import vectorize_diagrams
@@ -112,3 +113,17 @@ def test_subsample_samples_preserves_both_classes():
 
     assert len(subset) == 10
     assert {label for _, label in subset} == {0, 1}
+
+
+def test_feature_cache_key_changes_with_feature_flags():
+    original_include_f0 = FeatureConfig.INCLUDE_F0
+    try:
+        FeatureConfig.INCLUDE_F0 = False
+        key_without_f0 = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        FeatureConfig.INCLUDE_F0 = True
+        key_with_f0 = _feature_cache_key("statistics", n_bins=20, max_points=300)
+    finally:
+        FeatureConfig.INCLUDE_F0 = original_include_f0
+
+    assert key_without_f0 != key_with_f0

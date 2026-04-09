@@ -21,6 +21,7 @@ Re-runs with the same --method and --n-bins skip extraction entirely.
 """
 
 import argparse
+import hashlib
 import json
 import numpy as np
 from pathlib import Path
@@ -103,7 +104,7 @@ def _extract_split(
         if i % 100 == 0:
             print(f"  [{i}/{len(samples)}] {audio_path.name}")
 
-        cache_file = cache_dir / f"{audio_path.stem}_{method}_{n_bins}.npy"
+        cache_file = cache_dir / f"{audio_path.stem}_{_feature_cache_key(method, n_bins, max_points)}.npy"
         if cache_file.exists():
             vec = np.load(cache_file)
         else:
@@ -138,6 +139,42 @@ def _extract_split(
         y_list.append(label)
 
     return np.stack(X_list), np.array(y_list)
+
+
+def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
+    """Build a stable cache key that changes when feature geometry changes."""
+    signature = {
+        "audio": {
+            "sample_rate": AudioConfig.SAMPLE_RATE,
+            "n_mfcc": AudioConfig.N_MFCC,
+            "include_delta": AudioConfig.INCLUDE_DELTA,
+            "include_delta2": AudioConfig.INCLUDE_DELTA2,
+        },
+        "feature": {
+            "include_f0": FeatureConfig.INCLUDE_F0,
+            "include_jitter_shimmer": FeatureConfig.INCLUDE_JITTER_SHIMMER,
+            "include_formants": FeatureConfig.INCLUDE_FORMANTS,
+            "include_spectral_flux": FeatureConfig.INCLUDE_SPECTRAL_FLUX,
+            "n_formants": FeatureConfig.N_FORMANTS,
+        },
+        "topology": {
+            "max_homology_dim": TopologyConfig.MAX_HOMOLOGY_DIM,
+            "distance_metric": TopologyConfig.DISTANCE_METRIC,
+            "max_edge_length": TopologyConfig.MAX_EDGE_LENGTH,
+            "coeff": TopologyConfig.COEFF,
+        },
+        "vectorization": {
+            "method": method,
+            "n_bins": n_bins,
+            "sigma": VectorizationConfig.PI_SIGMA,
+        },
+        "point_cloud": {
+            "max_points": max_points,
+        },
+    }
+    encoded = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha1(encoded).hexdigest()[:12]
+    return f"{method}_{digest}"
 
 
 def _subsample_samples(
