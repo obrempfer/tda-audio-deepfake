@@ -181,6 +181,8 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "method": method,
             "n_bins": n_bins,
             "sigma": VectorizationConfig.PI_SIGMA,
+            "landscape_n_layers": VectorizationConfig.LANDSCAPE_N_LAYERS,
+            "landscape_n_bins": VectorizationConfig.LANDSCAPE_N_BINS,
         },
         "point_cloud": {
             "max_points": max_points,

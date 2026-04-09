@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from scripts.run_pipeline import _feature_cache_key, _subsample_samples
-from tda_deepfake.config import FeatureConfig, PointCloudConfig
+from tda_deepfake.config import FeatureConfig, PointCloudConfig, VectorizationConfig
 from tda_deepfake.features.extraction import extract_features, build_point_cloud
 from tda_deepfake.topology.persistent_homology import compute_persistence
 from tda_deepfake.topology.vectorization import vectorize_diagrams
@@ -141,3 +141,17 @@ def test_feature_cache_key_changes_with_point_cloud_preprocessing():
         PointCloudConfig.NORMALIZE = original_normalize
 
     assert key_without_normalize != key_with_normalize
+
+
+def test_feature_cache_key_changes_with_landscape_config():
+    original_layers = VectorizationConfig.LANDSCAPE_N_LAYERS
+    try:
+        VectorizationConfig.LANDSCAPE_N_LAYERS = 5
+        key_default = _feature_cache_key("landscape", n_bins=20, max_points=300)
+
+        VectorizationConfig.LANDSCAPE_N_LAYERS = 7
+        key_changed = _feature_cache_key("landscape", n_bins=20, max_points=300)
+    finally:
+        VectorizationConfig.LANDSCAPE_N_LAYERS = original_layers
+
+    assert key_default != key_changed
