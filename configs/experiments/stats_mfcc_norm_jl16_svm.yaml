@@ -1,0 +1,34 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+feature:
+  include_f0: false
+  include_jitter_shimmer: false
+  include_formants: false
+  include_spectral_flux: false
+
+point_cloud:
+  normalize: true
+  normalization_method: zscore
+  projection: jl
+  projection_dim: 16
+  projection_random_state: 42
+
+topology:
+  max_homology_dim: 1
+  distance_metric: euclidean
+
+vectorization:
+  method: statistics
+  pi_n_bins: 20
+  pi_sigma: 0.1
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 1.0
+  cv_folds: 5
+  random_state: 42

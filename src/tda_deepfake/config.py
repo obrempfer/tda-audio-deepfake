@@ -48,6 +48,23 @@ class FeatureConfig:
     N_FORMANTS: int = 3
 
 
+class PointCloudConfig:
+    """Point-cloud preprocessing before persistent homology.
+
+    Attributes:
+        NORMALIZE: Whether to normalize feature dimensions before PH.
+        NORMALIZATION_METHOD: Normalization strategy ('zscore' or 'none').
+        PROJECTION: Optional dimensionality reduction before PH ('none', 'pca', 'jl').
+        PROJECTION_DIM: Target dimensionality for PCA/JL projection.
+        PROJECTION_RANDOM_STATE: Random seed for stochastic projections.
+    """
+    NORMALIZE: bool = False
+    NORMALIZATION_METHOD: str = "zscore"
+    PROJECTION: str = "none"
+    PROJECTION_DIM: Optional[int] = None
+    PROJECTION_RANDOM_STATE: int = 42
+
+
 class TopologyConfig:
     """Persistent homology computation parameters.
 
@@ -140,7 +157,7 @@ def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = N
 def load_config_from_yaml(yaml_path: str) -> None:
     """Load configuration from a YAML file and update config class attributes.
 
-    Supported top-level keys: audio, feature, topology, vectorization, classifier, ablation.
+    Supported top-level keys: audio, feature, point_cloud, topology, vectorization, classifier, ablation.
     Each key maps to a dict of attribute names (lowercase) and their values.
 
     Args:
@@ -157,6 +174,7 @@ def load_config_from_yaml(yaml_path: str) -> None:
     _KEY_MAP = {
         "audio": AudioConfig,
         "feature": FeatureConfig,
+        "point_cloud": PointCloudConfig,
         "topology": TopologyConfig,
         "vectorization": VectorizationConfig,
         "classifier": ClassifierConfig,

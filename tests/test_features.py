@@ -1,7 +1,6 @@
 """Tests for audio feature extraction."""
 
 import numpy as np
-import pytest
 
 from tda_deepfake.features.extraction import extract_features, build_point_cloud
 from tda_deepfake.config import AudioConfig
@@ -42,3 +41,40 @@ def test_no_nan_in_features():
     audio = _synthetic_audio()
     features = extract_features(audio)
     assert not np.any(np.isnan(features))
+
+
+def test_build_point_cloud_normalization_zscore():
+    rng = np.random.default_rng(0)
+    features = rng.normal(loc=10.0, scale=5.0, size=(100, 4))
+    cloud = build_point_cloud(features, max_points=None, normalize=True)
+
+    np.testing.assert_allclose(np.mean(cloud, axis=0), np.zeros(4), atol=1e-7)
+    np.testing.assert_allclose(np.std(cloud, axis=0), np.ones(4), atol=1e-7)
+
+
+def test_build_point_cloud_pca_projection_reduces_dimension():
+    rng = np.random.default_rng(0)
+    features = rng.standard_normal((80, 12))
+    cloud = build_point_cloud(
+        features,
+        max_points=None,
+        normalize=True,
+        projection="pca",
+        projection_dim=5,
+    )
+
+    assert cloud.shape == (80, 5)
+
+
+def test_build_point_cloud_jl_projection_reduces_dimension():
+    rng = np.random.default_rng(0)
+    features = rng.standard_normal((80, 12))
+    cloud = build_point_cloud(
+        features,
+        max_points=None,
+        projection="jl",
+        projection_dim=6,
+        projection_random_state=42,
+    )
+
+    assert cloud.shape == (80, 6)

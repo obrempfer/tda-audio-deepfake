@@ -12,6 +12,9 @@ import numpy as np
 import numpy.typing as npt
 from typing import Optional
 
+from sklearn.decomposition import PCA
+from sklearn.random_projection import GaussianRandomProjection
+
 try:
     import librosa
     LIBROSA_AVAILABLE = True
@@ -25,7 +28,7 @@ try:
 except ImportError:
     PARSELMOUTH_AVAILABLE = False
 
-from ..config import AudioConfig, FeatureConfig
+from ..config import AudioConfig, FeatureConfig, PointCloudConfig
 
 
 def extract_features(
@@ -123,7 +126,15 @@ def extract_features(
     return feature_matrix.astype(np.float64)
 
 
-def build_point_cloud(feature_matrix: npt.NDArray, max_points: Optional[int] = 300) -> npt.NDArray:
+def build_point_cloud(
+    feature_matrix: npt.NDArray,
+    max_points: Optional[int] = 300,
+    normalize: bool = PointCloudConfig.NORMALIZE,
+    normalization_method: str = PointCloudConfig.NORMALIZATION_METHOD,
+    projection: str = PointCloudConfig.PROJECTION,
+    projection_dim: Optional[int] = PointCloudConfig.PROJECTION_DIM,
+    projection_random_state: int = PointCloudConfig.PROJECTION_RANDOM_STATE,
+) -> npt.NDArray:
     """Return the feature matrix as a point cloud for PH computation.
 
     Subsamples uniformly to at most max_points rows to keep Ripser tractable
@@ -132,14 +143,76 @@ def build_point_cloud(feature_matrix: npt.NDArray, max_points: Optional[int] = 3
     Args:
         feature_matrix: Output of extract_features(), shape (n_frames, n_dims).
         max_points: Maximum number of points to retain. None disables subsampling.
+        normalize: Whether to normalize feature dimensions before PH.
+        normalization_method: Dimensional normalization strategy.
+        projection: Optional projection method ('none', 'pca', 'jl').
+        projection_dim: Target dimensionality for projection.
+        projection_random_state: Random seed for stochastic projection methods.
 
     Returns:
         Point cloud array of shape (n_points, n_dims).
     """
+    point_cloud = feature_matrix
     if max_points is not None and len(feature_matrix) > max_points:
         indices = np.linspace(0, len(feature_matrix) - 1, max_points, dtype=int)
-        return feature_matrix[indices]
-    return feature_matrix
+        point_cloud = feature_matrix[indices]
+
+    if normalize:
+        point_cloud = _normalize_point_cloud(point_cloud, method=normalization_method)
+
+    if projection != "none":
+        point_cloud = _project_point_cloud(
+            point_cloud,
+            method=projection,
+            target_dim=projection_dim,
+            random_state=projection_random_state,
+        )
+
+    return point_cloud
+
+
+def _normalize_point_cloud(point_cloud: npt.NDArray, method: str = "zscore") -> npt.NDArray:
+    """Normalize point-cloud feature dimensions before persistent homology."""
+    if method == "none":
+        return point_cloud
+    if method != "zscore":
+        raise ValueError(f"Unknown normalization method: {method!r}")
+
+    mean = np.mean(point_cloud, axis=0, keepdims=True)
+    std = np.std(point_cloud, axis=0, keepdims=True)
+    std = np.where(std == 0.0, 1.0, std)
+    return (point_cloud - mean) / std
+
+
+def _project_point_cloud(
+    point_cloud: npt.NDArray,
+    method: str,
+    target_dim: Optional[int],
+    random_state: int,
+) -> npt.NDArray:
+    """Apply optional dimensionality reduction before persistent homology."""
+    if target_dim is None:
+        return point_cloud
+    if target_dim <= 0:
+        raise ValueError(f"projection_dim must be positive, got {target_dim}")
+    if target_dim >= point_cloud.shape[1]:
+        return point_cloud
+
+    if method == "pca":
+        n_components = min(target_dim, point_cloud.shape[0], point_cloud.shape[1])
+        if n_components >= point_cloud.shape[1]:
+            return point_cloud
+        projector = PCA(n_components=n_components, random_state=random_state)
+        return projector.fit_transform(point_cloud)
+
+    if method == "jl":
+        projector = GaussianRandomProjection(
+            n_components=target_dim,
+            random_state=random_state,
+        )
+        return projector.fit_transform(point_cloud)
+
+    raise ValueError(f"Unknown projection method: {method!r}")
 
 
 def _append_praat_features(

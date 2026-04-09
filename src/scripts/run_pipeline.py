@@ -34,6 +34,7 @@ from tda_deepfake.config import (
     AudioConfig,
     ClassifierConfig,
     FeatureConfig,
+    PointCloudConfig,
     TopologyConfig,
     VectorizationConfig,
     load_config_from_yaml,
@@ -119,7 +120,15 @@ def _extract_split(
                 include_formants=FeatureConfig.INCLUDE_FORMANTS,
                 include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
             )
-            point_cloud = build_point_cloud(features, max_points=max_points)
+            point_cloud = build_point_cloud(
+                features,
+                max_points=max_points,
+                normalize=PointCloudConfig.NORMALIZE,
+                normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
+                projection=PointCloudConfig.PROJECTION,
+                projection_dim=PointCloudConfig.PROJECTION_DIM,
+                projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
+            )
             diagrams = compute_persistence(
                 point_cloud,
                 max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
@@ -158,6 +167,11 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "n_formants": FeatureConfig.N_FORMANTS,
         },
         "topology": {
+            "point_cloud_normalize": PointCloudConfig.NORMALIZE,
+            "point_cloud_normalization_method": PointCloudConfig.NORMALIZATION_METHOD,
+            "point_cloud_projection": PointCloudConfig.PROJECTION,
+            "point_cloud_projection_dim": PointCloudConfig.PROJECTION_DIM,
+            "point_cloud_projection_random_state": PointCloudConfig.PROJECTION_RANDOM_STATE,
             "max_homology_dim": TopologyConfig.MAX_HOMOLOGY_DIM,
             "distance_metric": TopologyConfig.DISTANCE_METRIC,
             "max_edge_length": TopologyConfig.MAX_EDGE_LENGTH,
