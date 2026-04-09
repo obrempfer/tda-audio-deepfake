@@ -140,6 +140,63 @@ def _extract_split(
     return np.stack(X_list), np.array(y_list)
 
 
+def _subsample_samples(
+    samples: list[tuple[Path, int]],
+    max_samples: int | None,
+    random_state: int,
+) -> list[tuple[Path, int]]:
+    """Return a reproducible subsample that preserves class balance when possible."""
+    if max_samples is None or max_samples >= len(samples):
+        return samples
+
+    labels = np.array([label for _, label in samples], dtype=int)
+    unique_labels, counts = np.unique(labels, return_counts=True)
+
+    if len(unique_labels) <= 1:
+        return samples[:max_samples]
+
+    rng = np.random.default_rng(random_state)
+    class_indices = {
+        label: rng.permutation(np.flatnonzero(labels == label))
+        for label in unique_labels
+    }
+
+    target_counts = {
+        label: max(1, int(np.floor(max_samples * count / len(samples))))
+        for label, count in zip(unique_labels, counts)
+    }
+
+    assigned = sum(target_counts.values())
+    if assigned > max_samples:
+        for label in sorted(target_counts, key=target_counts.get, reverse=True):
+            if assigned == max_samples:
+                break
+            if target_counts[label] > 1:
+                target_counts[label] -= 1
+                assigned -= 1
+    elif assigned < max_samples:
+        remainders = sorted(
+            (
+                (max_samples * count / len(samples)) - target_counts[label],
+                label,
+            )
+            for label, count in zip(unique_labels, counts)
+        )
+        while assigned < max_samples:
+            for _, label in reversed(remainders):
+                if assigned == max_samples:
+                    break
+                if target_counts[label] < len(class_indices[label]):
+                    target_counts[label] += 1
+                    assigned += 1
+
+    selected = np.concatenate(
+        [class_indices[label][: target_counts[label]] for label in unique_labels]
+    )
+    rng.shuffle(selected)
+    return [samples[idx] for idx in selected.tolist()]
+
+
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -166,8 +223,9 @@ def main() -> None:
 
         print(f"Loading train samples from {args.train_protocol}...")
         train_samples = list(load_asvspoof_manifest(args.train_protocol, args.train_audio_dir))
-        if args.max_samples:
-            train_samples = train_samples[: args.max_samples]
+        train_samples = _subsample_samples(
+            train_samples, args.max_samples, ClassifierConfig.RANDOM_STATE
+        )
 
         print(f"Extracting features for {len(train_samples)} train samples...")
         X_train, y_train = _extract_split(
@@ -228,8 +286,7 @@ def main() -> None:
 
     print(f"Loading samples from {args.protocol}...")
     samples = list(load_asvspoof_manifest(args.protocol, args.audio_dir))
-    if args.max_samples:
-        samples = samples[: args.max_samples]
+    samples = _subsample_samples(samples, args.max_samples, ClassifierConfig.RANDOM_STATE)
 
     print(f"Extracting features for {len(samples)} samples...")
     X, y = _extract_split(samples, cache_dir, method, n_bins, max_points)

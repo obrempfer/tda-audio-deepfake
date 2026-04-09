@@ -7,6 +7,7 @@ numpy/ripser/scikit-learn installed (no persim or giotto-tda required).
 import numpy as np
 import pytest
 
+from scripts.run_pipeline import _subsample_samples
 from tda_deepfake.features.extraction import extract_features, build_point_cloud
 from tda_deepfake.topology.persistent_homology import compute_persistence
 from tda_deepfake.topology.vectorization import vectorize_diagrams
@@ -103,3 +104,11 @@ def test_classifier_save_load(tmp_path):
     preds_after = clf2.predict(X)
 
     np.testing.assert_array_equal(preds_before, preds_after)
+
+
+def test_subsample_samples_preserves_both_classes():
+    samples = [(f"sample_{i}", 0) for i in range(40)] + [(f"sample_{i}", 1) for i in range(40, 80)]
+    subset = _subsample_samples(samples, max_samples=10, random_state=42)
+
+    assert len(subset) == 10
+    assert {label for _, label in subset} == {0, 1}
