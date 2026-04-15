@@ -65,17 +65,46 @@ class PointCloudConfig:
     PROJECTION_RANDOM_STATE: int = 42
 
 
+class SpectrogramConfig:
+    """Grid representation parameters for cubical persistent homology.
+
+    Attributes:
+        KIND: Spectrogram family to build ('mel' for now).
+        N_MELS: Number of mel bins in the time-frequency grid.
+        POWER: Exponent for mel-spectrogram magnitude construction.
+        FMIN: Lower frequency bound for the mel filterbank (Hz).
+        FMAX: Upper frequency bound for the mel filterbank (Hz or None).
+        LOG_SCALE: Whether to convert power to log-power decibels.
+        NORMALIZE: Whether to normalize the grid before cubical PH.
+        NORMALIZATION_METHOD: Grid normalization strategy ('minmax', 'zscore', 'none').
+        MAX_FRAMES: Optional cap on time frames via uniform subsampling.
+    """
+    KIND: str = "mel"
+    N_MELS: int = 64
+    POWER: float = 2.0
+    FMIN: float = 0.0
+    FMAX: Optional[float] = None
+    LOG_SCALE: bool = True
+    NORMALIZE: bool = True
+    NORMALIZATION_METHOD: str = "minmax"
+    MAX_FRAMES: Optional[int] = 256
+
+
 class TopologyConfig:
     """Persistent homology computation parameters.
 
     Attributes:
+        COMPLEX: Topological complex family ('vietoris_rips' or 'cubical').
         MAX_HOMOLOGY_DIM: Highest homological dimension to compute (0=H0, 1=H1).
         DISTANCE_METRIC: Distance metric for Vietoris-Rips ('euclidean' or 'precomputed').
+        CUBICAL_FILTRATION: Cubical filtration polarity ('sublevel' or 'superlevel').
         MAX_EDGE_LENGTH: Maximum filtration value (None = auto).
         COEFF: Coefficient field for homology computation.
     """
+    COMPLEX: str = "vietoris_rips"
     MAX_HOMOLOGY_DIM: int = 1
     DISTANCE_METRIC: str = "euclidean"
+    CUBICAL_FILTRATION: str = "superlevel"
     MAX_EDGE_LENGTH: Optional[float] = None
     COEFF: int = 2
 
@@ -157,7 +186,7 @@ def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = N
 def load_config_from_yaml(yaml_path: str) -> None:
     """Load configuration from a YAML file and update config class attributes.
 
-    Supported top-level keys: audio, feature, point_cloud, topology, vectorization, classifier, ablation.
+    Supported top-level keys: audio, feature, point_cloud, spectrogram, topology, vectorization, classifier, ablation.
     Each key maps to a dict of attribute names (lowercase) and their values.
 
     Args:
@@ -175,6 +204,7 @@ def load_config_from_yaml(yaml_path: str) -> None:
         "audio": AudioConfig,
         "feature": FeatureConfig,
         "point_cloud": PointCloudConfig,
+        "spectrogram": SpectrogramConfig,
         "topology": TopologyConfig,
         "vectorization": VectorizationConfig,
         "classifier": ClassifierConfig,

@@ -1,7 +1,8 @@
 """Persistent homology computation and vectorization.
 
-Computes Vietoris-Rips persistent homology on point clouds (Ripser)
-and converts persistence diagrams to fixed-size vectors for classification.
+Supports Vietoris-Rips persistent homology on point clouds and cubical
+persistent homology on grid representations, then vectorizes diagrams
+for downstream classification.
 """
 
 from .persistent_homology import compute_persistence

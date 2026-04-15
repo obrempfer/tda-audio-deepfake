@@ -8,6 +8,6 @@ Computes physically motivated embeddings from audio signals:
 - Spectral flux
 """
 
-from .extraction import extract_features, build_point_cloud
+from .extraction import extract_features, build_point_cloud, build_mel_spectrogram
 
-__all__ = ["extract_features", "build_point_cloud"]
+__all__ = ["extract_features", "build_point_cloud", "build_mel_spectrogram"]

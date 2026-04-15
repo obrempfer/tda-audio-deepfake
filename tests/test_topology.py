@@ -12,6 +12,11 @@ def _random_point_cloud(n: int = 100, d: int = 10, seed: int = 0) -> np.ndarray:
     return rng.standard_normal((n, d))
 
 
+def _random_grid(rows: int = 16, cols: int = 24, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return rng.standard_normal((rows, cols))
+
+
 def test_compute_persistence_returns_diagrams():
     cloud = _random_point_cloud()
     diagrams = compute_persistence(cloud, max_dim=1)
@@ -44,4 +49,27 @@ def test_vectorize_fixed_size():
     dgms2 = compute_persistence(cloud2)
     vec1 = vectorize_diagrams(dgms1, method="statistics")
     vec2 = vectorize_diagrams(dgms2, method="statistics")
+    assert vec1.shape == vec2.shape
+
+
+def test_compute_cubical_persistence_returns_diagrams():
+    grid = _random_grid()
+    diagrams = compute_persistence(grid, complex_type="cubical", max_dim=1)
+
+    assert isinstance(diagrams, list)
+    assert len(diagrams) == 2
+    for dgm in diagrams:
+        assert dgm.ndim == 2
+        assert dgm.shape[1] == 2
+
+
+def test_cubical_statistics_vectorization_fixed_size():
+    grid1 = _random_grid(seed=0)
+    grid2 = _random_grid(seed=1)
+    dgms1 = compute_persistence(grid1, complex_type="cubical", max_dim=1)
+    dgms2 = compute_persistence(grid2, complex_type="cubical", max_dim=1)
+
+    vec1 = vectorize_diagrams(dgms1, method="statistics")
+    vec2 = vectorize_diagrams(dgms2, method="statistics")
+
     assert vec1.shape == vec2.shape

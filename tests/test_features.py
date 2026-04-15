@@ -1,8 +1,9 @@
 """Tests for audio feature extraction."""
 
 import numpy as np
+import pytest
 
-from tda_deepfake.features.extraction import extract_features, build_point_cloud
+from tda_deepfake.features.extraction import extract_features, build_point_cloud, build_mel_spectrogram
 from tda_deepfake.config import AudioConfig
 
 
@@ -78,3 +79,28 @@ def test_build_point_cloud_jl_projection_reduces_dimension():
     )
 
     assert cloud.shape == (80, 6)
+
+
+def test_build_mel_spectrogram_shape_and_finiteness():
+    audio = _synthetic_audio(duration_s=1.0)
+    grid = build_mel_spectrogram(audio, n_mels=32, max_frames=40)
+
+    assert grid.shape[0] == 32
+    assert grid.shape[1] <= 40
+    assert np.isfinite(grid).all()
+
+
+@pytest.mark.parametrize("method", ["minmax", "zscore"])
+def test_build_mel_spectrogram_normalization_methods(method: str):
+    audio = _synthetic_audio(duration_s=0.5)
+    grid = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        normalization_method=method,
+    )
+
+    assert np.isfinite(grid).all()
+    if method == "minmax":
+        assert np.min(grid) >= 0.0
+        assert np.max(grid) <= 1.0

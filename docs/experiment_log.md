@@ -15,6 +15,7 @@ This file is the running record for benchmark setup, implementation changes that
 
 - `2026-04-08`: fixed `--max-samples` subsampling so smoke runs are stratified instead of taking the first protocol rows, which could collapse to a single class.
 - `2026-04-08`: feature-cache keys now include audio, feature, topology, vectorization, and `max_points` settings so different feature sweeps do not silently reuse stale vectors.
+- `2026-04-15`: added a parallel cubical-PH branch: audio can now be represented as a normalized mel spectrogram grid, passed through cubical persistence, then vectorized with the same downstream statistics / persistence-image / landscape options used by the Vietoris-Rips branch.
 
 ## Results
 
@@ -32,6 +33,7 @@ This file is the running record for benchmark setup, implementation changes that
 | 2026-04-08 | balanced train CV, bounded subset (`n=1000`) | MFCC + delta + delta-delta | 300 | statistics | SVM | 0.732 ± 0.035 | 0.803 ± 0.028 | Per-utterance z-score normalization + JL random projection to 16 dims before PH |
 | 2026-04-09 | balanced train CV, bounded subset (`n=1000`) | MFCC + delta + delta-delta | 300 | persistence_image | SVM | 0.728 ± 0.027 | 0.796 ± 0.027 | Worse than normalized statistics on the matched benchmark |
 | 2026-04-09 | balanced train CV, bounded subset (`n=1000`) | MFCC + delta + delta-delta | 300 | landscape | SVM | 0.746 ± 0.012 | 0.838 ± 0.025 | Best matched `n=1000` result so far |
+| 2026-04-15 | train CV, stratified subset (`n=100`) | mel spectrogram (`64 x <=256`) | n/a | landscape | SVM | 0.900 ± 0.000 | 0.611 ± 0.205 | Cubical-PH smoke benchmark on the original imbalanced train split; useful only to validate the new branch end to end |
 
 ## Current Read
 
@@ -42,10 +44,11 @@ This file is the running record for benchmark setup, implementation changes that
 - Per-utterance feature normalization before PH improved the matched `n=1000` MFCC-only benchmark (`AUC 0.824` vs `0.800`), which is the strongest small-benchmark result so far.
 - Adding PCA or JL projection after normalization did not improve on normalization alone at `16` dimensions.
 - On the matched normalized benchmark, `persistence_image` underperformed `statistics`, while `landscape` improved to `AUC 0.838`, making it the strongest small-benchmark vectorization so far.
+- The cubical branch is implemented and runnable, but its first imbalanced smoke benchmark is not informative enough to compare against the VR branch. The next cubical run should use the same balanced protocol used for the VR experiments.
 
 ## Next Runs
 
-1. Re-run the strongest normalized landscape setup on the full balanced train protocol (`n=5160`)
-2. Balanced train CV with higher `max_points` (for example `500`) on the strongest setup
-3. Train/dev evaluation using the strongest current setup
-4. Formants as a separate follow-on experiment, not bundled with F0/flux
+1. Run cubical PH on the balanced train protocol with the same evaluation shape used for the strongest VR runs
+2. Compare cubical `statistics` vs cubical `landscape` on a matched balanced subset before scaling up
+3. Balanced train CV with higher `max_points` on the strongest VR setup
+4. Train/dev evaluation using the strongest current setup

@@ -27,7 +27,7 @@ import numpy as np
 from pathlib import Path
 
 from tda_deepfake.utils import load_audio, load_asvspoof_manifest
-from tda_deepfake.features import extract_features, build_point_cloud
+from tda_deepfake.features import extract_features, build_point_cloud, build_mel_spectrogram
 from tda_deepfake.topology import compute_persistence, vectorize_diagrams
 from tda_deepfake.classification import Classifier
 from tda_deepfake.config import (
@@ -35,6 +35,7 @@ from tda_deepfake.config import (
     ClassifierConfig,
     FeatureConfig,
     PointCloudConfig,
+    SpectrogramConfig,
     TopologyConfig,
     VectorizationConfig,
     load_config_from_yaml,
@@ -110,29 +111,46 @@ def _extract_split(
             vec = np.load(cache_file)
         else:
             audio = load_audio(audio_path, sample_rate=AudioConfig.SAMPLE_RATE)
-            features = extract_features(
-                audio,
-                sample_rate=AudioConfig.SAMPLE_RATE,
-                include_delta=AudioConfig.INCLUDE_DELTA,
-                include_delta2=AudioConfig.INCLUDE_DELTA2,
-                include_f0=FeatureConfig.INCLUDE_F0,
-                include_jitter_shimmer=FeatureConfig.INCLUDE_JITTER_SHIMMER,
-                include_formants=FeatureConfig.INCLUDE_FORMANTS,
-                include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
-            )
-            point_cloud = build_point_cloud(
-                features,
-                max_points=max_points,
-                normalize=PointCloudConfig.NORMALIZE,
-                normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
-                projection=PointCloudConfig.PROJECTION,
-                projection_dim=PointCloudConfig.PROJECTION_DIM,
-                projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
-            )
+            if TopologyConfig.COMPLEX == "cubical":
+                topological_object = build_mel_spectrogram(
+                    audio,
+                    sample_rate=AudioConfig.SAMPLE_RATE,
+                    n_mels=SpectrogramConfig.N_MELS,
+                    power=SpectrogramConfig.POWER,
+                    fmin=SpectrogramConfig.FMIN,
+                    fmax=SpectrogramConfig.FMAX,
+                    log_scale=SpectrogramConfig.LOG_SCALE,
+                    normalize=SpectrogramConfig.NORMALIZE,
+                    normalization_method=SpectrogramConfig.NORMALIZATION_METHOD,
+                    max_frames=SpectrogramConfig.MAX_FRAMES,
+                )
+            else:
+                features = extract_features(
+                    audio,
+                    sample_rate=AudioConfig.SAMPLE_RATE,
+                    include_delta=AudioConfig.INCLUDE_DELTA,
+                    include_delta2=AudioConfig.INCLUDE_DELTA2,
+                    include_f0=FeatureConfig.INCLUDE_F0,
+                    include_jitter_shimmer=FeatureConfig.INCLUDE_JITTER_SHIMMER,
+                    include_formants=FeatureConfig.INCLUDE_FORMANTS,
+                    include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
+                )
+                topological_object = build_point_cloud(
+                    features,
+                    max_points=max_points,
+                    normalize=PointCloudConfig.NORMALIZE,
+                    normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
+                    projection=PointCloudConfig.PROJECTION,
+                    projection_dim=PointCloudConfig.PROJECTION_DIM,
+                    projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
+                )
+
             diagrams = compute_persistence(
-                point_cloud,
+                topological_object,
+                complex_type=TopologyConfig.COMPLEX,
                 max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
                 metric=TopologyConfig.DISTANCE_METRIC,
+                cubical_filtration=TopologyConfig.CUBICAL_FILTRATION,
                 max_edge_length=TopologyConfig.MAX_EDGE_LENGTH,
                 coeff=TopologyConfig.COEFF,
             )
@@ -167,6 +185,7 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "n_formants": FeatureConfig.N_FORMANTS,
         },
         "topology": {
+            "complex": TopologyConfig.COMPLEX,
             "point_cloud_normalize": PointCloudConfig.NORMALIZE,
             "point_cloud_normalization_method": PointCloudConfig.NORMALIZATION_METHOD,
             "point_cloud_projection": PointCloudConfig.PROJECTION,
@@ -174,6 +193,7 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "point_cloud_projection_random_state": PointCloudConfig.PROJECTION_RANDOM_STATE,
             "max_homology_dim": TopologyConfig.MAX_HOMOLOGY_DIM,
             "distance_metric": TopologyConfig.DISTANCE_METRIC,
+            "cubical_filtration": TopologyConfig.CUBICAL_FILTRATION,
             "max_edge_length": TopologyConfig.MAX_EDGE_LENGTH,
             "coeff": TopologyConfig.COEFF,
         },
@@ -186,6 +206,17 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
         },
         "point_cloud": {
             "max_points": max_points,
+        },
+        "spectrogram": {
+            "kind": SpectrogramConfig.KIND,
+            "n_mels": SpectrogramConfig.N_MELS,
+            "power": SpectrogramConfig.POWER,
+            "fmin": SpectrogramConfig.FMIN,
+            "fmax": SpectrogramConfig.FMAX,
+            "log_scale": SpectrogramConfig.LOG_SCALE,
+            "normalize": SpectrogramConfig.NORMALIZE,
+            "normalization_method": SpectrogramConfig.NORMALIZATION_METHOD,
+            "max_frames": SpectrogramConfig.MAX_FRAMES,
         },
     }
     encoded = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")

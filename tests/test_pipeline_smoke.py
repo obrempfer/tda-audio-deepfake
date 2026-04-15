@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from scripts.run_pipeline import _feature_cache_key, _subsample_samples
-from tda_deepfake.config import FeatureConfig, PointCloudConfig, VectorizationConfig
-from tda_deepfake.features.extraction import extract_features, build_point_cloud
+from tda_deepfake.config import FeatureConfig, PointCloudConfig, TopologyConfig, VectorizationConfig
+from tda_deepfake.features.extraction import extract_features, build_point_cloud, build_mel_spectrogram
 from tda_deepfake.topology.persistent_homology import compute_persistence
 from tda_deepfake.topology.vectorization import vectorize_diagrams
 from tda_deepfake.classification.classifier import Classifier
@@ -53,6 +53,31 @@ def test_full_pipeline_smoke():
     metrics = clf.evaluate(X, y)
     assert "auc" in metrics
     assert "report" in metrics
+    assert 0.0 <= metrics["auc"] <= 1.0
+
+
+def test_full_cubical_pipeline_smoke():
+    """End-to-end: synthetic audio -> mel grid -> cubical PH -> SVM prediction."""
+    n_samples = 10
+    X_list, y_list = [], []
+
+    for i in range(n_samples):
+        audio = _synthetic_audio(seed=i)
+        grid = build_mel_spectrogram(audio, n_mels=24, max_frames=32)
+        diagrams = compute_persistence(grid, complex_type="cubical", max_dim=1)
+        vec = vectorize_diagrams(diagrams, method="statistics")
+        X_list.append(vec)
+        y_list.append(i % 2)
+
+    X = np.stack(X_list)
+    y = np.array(y_list)
+
+    clf = Classifier(model="svm")
+    clf.fit(X, y)
+    metrics = clf.evaluate(X, y)
+
+    assert X.shape[0] == n_samples
+    assert "auc" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
 
 
@@ -155,3 +180,17 @@ def test_feature_cache_key_changes_with_landscape_config():
         VectorizationConfig.LANDSCAPE_N_LAYERS = original_layers
 
     assert key_default != key_changed
+
+
+def test_feature_cache_key_changes_with_complex_type():
+    original_complex = TopologyConfig.COMPLEX
+    try:
+        TopologyConfig.COMPLEX = "vietoris_rips"
+        key_vr = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        TopologyConfig.COMPLEX = "cubical"
+        key_cubical = _feature_cache_key("statistics", n_bins=20, max_points=300)
+    finally:
+        TopologyConfig.COMPLEX = original_complex
+
+    assert key_vr != key_cubical

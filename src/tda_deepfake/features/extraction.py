@@ -28,7 +28,7 @@ try:
 except ImportError:
     PARSELMOUTH_AVAILABLE = False
 
-from ..config import AudioConfig, FeatureConfig, PointCloudConfig
+from ..config import AudioConfig, FeatureConfig, PointCloudConfig, SpectrogramConfig
 
 
 def extract_features(
@@ -126,6 +126,49 @@ def extract_features(
     return feature_matrix.astype(np.float64)
 
 
+def build_mel_spectrogram(
+    audio: npt.NDArray[np.float32],
+    sample_rate: int = AudioConfig.SAMPLE_RATE,
+    n_mels: int = SpectrogramConfig.N_MELS,
+    power: float = SpectrogramConfig.POWER,
+    fmin: float = SpectrogramConfig.FMIN,
+    fmax: Optional[float] = SpectrogramConfig.FMAX,
+    log_scale: bool = SpectrogramConfig.LOG_SCALE,
+    normalize: bool = SpectrogramConfig.NORMALIZE,
+    normalization_method: str = SpectrogramConfig.NORMALIZATION_METHOD,
+    max_frames: Optional[int] = SpectrogramConfig.MAX_FRAMES,
+) -> npt.NDArray[np.float64]:
+    """Build a mel-spectrogram grid for cubical persistent homology."""
+    if not LIBROSA_AVAILABLE:
+        raise ImportError("librosa is required for mel spectrogram extraction. pip install librosa")
+
+    n_fft = int(sample_rate * AudioConfig.WINDOW_SIZE_MS / 1000)
+    hop_length = int(sample_rate * AudioConfig.HOP_SIZE_MS / 1000)
+
+    grid = librosa.feature.melspectrogram(
+        y=audio,
+        sr=sample_rate,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        n_mels=n_mels,
+        power=power,
+        fmin=fmin,
+        fmax=fmax,
+    ).astype(np.float64)
+
+    if log_scale:
+        grid = librosa.power_to_db(grid, ref=np.max)
+
+    if max_frames is not None and grid.shape[1] > max_frames:
+        indices = np.linspace(0, grid.shape[1] - 1, max_frames, dtype=int)
+        grid = grid[:, indices]
+
+    if normalize:
+        grid = _normalize_grid(grid, method=normalization_method)
+
+    return grid
+
+
 def build_point_cloud(
     feature_matrix: npt.NDArray,
     max_points: Optional[int] = 300,
@@ -213,6 +256,25 @@ def _project_point_cloud(
         return projector.fit_transform(point_cloud)
 
     raise ValueError(f"Unknown projection method: {method!r}")
+
+
+def _normalize_grid(grid: npt.NDArray, method: str = "minmax") -> npt.NDArray:
+    """Normalize a 2-D spectrogram grid before cubical persistent homology."""
+    if method == "none":
+        return grid
+    if method == "zscore":
+        mean = np.mean(grid)
+        std = np.std(grid)
+        if std == 0.0:
+            std = 1.0
+        return (grid - mean) / std
+    if method == "minmax":
+        lower = np.min(grid)
+        upper = np.max(grid)
+        if upper == lower:
+            return np.zeros_like(grid)
+        return (grid - lower) / (upper - lower)
+    raise ValueError(f"Unknown grid normalization method: {method!r}")
 
 
 def _append_praat_features(
