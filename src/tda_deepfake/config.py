@@ -94,10 +94,12 @@ class TopologyConfig:
     """Persistent homology computation parameters.
 
     Attributes:
-        COMPLEX: Topological complex family ('vietoris_rips' or 'cubical').
+        COMPLEX: Topological complex family ('vietoris_rips', 'cubical', or 'knn_flag').
         MAX_HOMOLOGY_DIM: Highest homological dimension to compute (0=H0, 1=H1).
         DISTANCE_METRIC: Distance metric for Vietoris-Rips ('euclidean' or 'precomputed').
         CUBICAL_FILTRATION: Cubical filtration polarity ('sublevel' or 'superlevel').
+        KNN_K: Number of neighbors for the kNN graph used by the flag/clique complex.
+        KNN_GRAPH_MODE: Symmetrization mode for the kNN graph ('union' or 'mutual').
         MAX_EDGE_LENGTH: Maximum filtration value (None = auto).
         COEFF: Coefficient field for homology computation.
     """
@@ -105,6 +107,8 @@ class TopologyConfig:
     MAX_HOMOLOGY_DIM: int = 1
     DISTANCE_METRIC: str = "euclidean"
     CUBICAL_FILTRATION: str = "superlevel"
+    KNN_K: int = 15
+    KNN_GRAPH_MODE: str = "union"
     MAX_EDGE_LENGTH: Optional[float] = None
     COEFF: int = 2
 

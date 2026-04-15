@@ -1,0 +1,30 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+point_cloud:
+  normalize: true
+  normalization_method: zscore
+  projection: none
+  projection_dim:
+
+topology:
+  complex: knn_flag
+  distance_metric: euclidean
+  knn_k: 15
+  knn_graph_mode: union
+  max_homology_dim: 1
+
+vectorization:
+  method: landscape
+  landscape_n_layers: 5
+  landscape_n_bins: 100
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 1.0
+  cv_folds: 5
+  random_state: 42

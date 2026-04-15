@@ -151,6 +151,8 @@ def _extract_split(
                 max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
                 metric=TopologyConfig.DISTANCE_METRIC,
                 cubical_filtration=TopologyConfig.CUBICAL_FILTRATION,
+                knn_k=TopologyConfig.KNN_K,
+                knn_graph_mode=TopologyConfig.KNN_GRAPH_MODE,
                 max_edge_length=TopologyConfig.MAX_EDGE_LENGTH,
                 coeff=TopologyConfig.COEFF,
             )
@@ -194,6 +196,8 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "max_homology_dim": TopologyConfig.MAX_HOMOLOGY_DIM,
             "distance_metric": TopologyConfig.DISTANCE_METRIC,
             "cubical_filtration": TopologyConfig.CUBICAL_FILTRATION,
+            "knn_k": TopologyConfig.KNN_K,
+            "knn_graph_mode": TopologyConfig.KNN_GRAPH_MODE,
             "max_edge_length": TopologyConfig.MAX_EDGE_LENGTH,
             "coeff": TopologyConfig.COEFF,
         },

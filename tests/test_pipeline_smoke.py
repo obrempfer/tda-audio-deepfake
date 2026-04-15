@@ -81,6 +81,38 @@ def test_full_cubical_pipeline_smoke():
     assert 0.0 <= metrics["auc"] <= 1.0
 
 
+def test_full_knn_flag_pipeline_smoke():
+    """End-to-end: synthetic audio -> point cloud -> kNN flag PH -> SVM prediction."""
+    n_samples = 10
+    X_list, y_list = [], []
+
+    for i in range(n_samples):
+        audio = _synthetic_audio(seed=i)
+        features = extract_features(
+            audio,
+            include_f0=False,
+            include_jitter_shimmer=False,
+            include_formants=False,
+            include_spectral_flux=False,
+        )
+        cloud = build_point_cloud(features, max_points=100)
+        diagrams = compute_persistence(cloud, complex_type="knn_flag", max_dim=1, knn_k=10)
+        vec = vectorize_diagrams(diagrams, method="statistics")
+        X_list.append(vec)
+        y_list.append(i % 2)
+
+    X = np.stack(X_list)
+    y = np.array(y_list)
+
+    clf = Classifier(model="svm")
+    clf.fit(X, y)
+    metrics = clf.evaluate(X, y)
+
+    assert X.shape[0] == n_samples
+    assert "auc" in metrics
+    assert 0.0 <= metrics["auc"] <= 1.0
+
+
 def test_feature_vector_fixed_length():
     """Vectors must be same length regardless of utterance duration."""
     short_audio = _synthetic_audio(duration_s=0.5, seed=0)
@@ -194,3 +226,17 @@ def test_feature_cache_key_changes_with_complex_type():
         TopologyConfig.COMPLEX = original_complex
 
     assert key_vr != key_cubical
+
+
+def test_feature_cache_key_changes_with_knn_graph_parameters():
+    original_k = TopologyConfig.KNN_K
+    try:
+        TopologyConfig.KNN_K = 10
+        key_k10 = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        TopologyConfig.KNN_K = 20
+        key_k20 = _feature_cache_key("statistics", n_bins=20, max_points=300)
+    finally:
+        TopologyConfig.KNN_K = original_k
+
+    assert key_k10 != key_k20

@@ -73,3 +73,26 @@ def test_cubical_statistics_vectorization_fixed_size():
     vec2 = vectorize_diagrams(dgms2, method="statistics")
 
     assert vec1.shape == vec2.shape
+
+
+def test_compute_knn_flag_persistence_returns_diagrams():
+    cloud = _random_point_cloud(n=60, d=6)
+    diagrams = compute_persistence(cloud, complex_type="knn_flag", max_dim=1, knn_k=8)
+
+    assert isinstance(diagrams, list)
+    assert len(diagrams) == 2
+    for dgm in diagrams:
+        assert dgm.ndim == 2
+        assert dgm.shape[1] == 2
+
+
+def test_knn_flag_statistics_vectorization_fixed_size():
+    cloud1 = _random_point_cloud(seed=0)
+    cloud2 = _random_point_cloud(seed=1)
+    dgms1 = compute_persistence(cloud1, complex_type="knn_flag", max_dim=1, knn_k=10)
+    dgms2 = compute_persistence(cloud2, complex_type="knn_flag", max_dim=1, knn_k=10)
+
+    vec1 = vectorize_diagrams(dgms1, method="statistics")
+    vec2 = vectorize_diagrams(dgms2, method="statistics")
+
+    assert vec1.shape == vec2.shape
