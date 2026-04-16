@@ -28,13 +28,14 @@ from pathlib import Path
 
 from tda_deepfake.utils import load_audio, load_asvspoof_manifest
 from tda_deepfake.features import extract_features, build_point_cloud, build_mel_spectrogram
-from tda_deepfake.topology import compute_persistence, vectorize_diagrams
+from tda_deepfake.topology import compute_persistence, compute_morse_smale_signature, vectorize_diagrams
 from tda_deepfake.classification import Classifier
 from tda_deepfake.config import (
     AudioConfig,
     ClassifierConfig,
     FeatureConfig,
     PointCloudConfig,
+    MorseSmaleConfig,
     SpectrogramConfig,
     TopologyConfig,
     VectorizationConfig,
@@ -111,8 +112,8 @@ def _extract_split(
             vec = np.load(cache_file)
         else:
             audio = load_audio(audio_path, sample_rate=AudioConfig.SAMPLE_RATE)
-            if TopologyConfig.COMPLEX == "cubical":
-                topological_object = build_mel_spectrogram(
+            if TopologyConfig.COMPLEX in {"cubical", "morse_smale", "morse_smale_approx"}:
+                grid = build_mel_spectrogram(
                     audio,
                     sample_rate=AudioConfig.SAMPLE_RATE,
                     n_mels=SpectrogramConfig.N_MELS,
@@ -120,10 +121,43 @@ def _extract_split(
                     fmin=SpectrogramConfig.FMIN,
                     fmax=SpectrogramConfig.FMAX,
                     log_scale=SpectrogramConfig.LOG_SCALE,
+                    smoothing=SpectrogramConfig.SMOOTHING,
+                    smoothing_sigma=SpectrogramConfig.SMOOTHING_SIGMA,
                     normalize=SpectrogramConfig.NORMALIZE,
                     normalization_method=SpectrogramConfig.NORMALIZATION_METHOD,
                     max_frames=SpectrogramConfig.MAX_FRAMES,
                 )
+                if TopologyConfig.COMPLEX == "morse_smale_approx":
+                    vec = compute_morse_smale_signature(
+                        grid,
+                        implementation="approx",
+                        neighborhood_size=MorseSmaleConfig.NEIGHBORHOOD_SIZE,
+                        top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
+                        include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
+                        top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
+                    )
+                    np.save(cache_file, vec)
+                    X_list.append(vec)
+                    y_list.append(label)
+                    continue
+                if TopologyConfig.COMPLEX == "morse_smale":
+                    vec = compute_morse_smale_signature(
+                        grid,
+                        implementation=MorseSmaleConfig.IMPLEMENTATION,
+                        graph_max_neighbors=MorseSmaleConfig.GRAPH_MAX_NEIGHBORS,
+                        graph_relaxed=MorseSmaleConfig.GRAPH_RELAXED,
+                        normalization=MorseSmaleConfig.NORMALIZATION,
+                        simplification=MorseSmaleConfig.SIMPLIFICATION,
+                        neighborhood_size=MorseSmaleConfig.NEIGHBORHOOD_SIZE,
+                        top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
+                        include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
+                        top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
+                    )
+                    np.save(cache_file, vec)
+                    X_list.append(vec)
+                    y_list.append(label)
+                    continue
+                topological_object = grid
             else:
                 features = extract_features(
                     audio,
@@ -218,9 +252,22 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "fmin": SpectrogramConfig.FMIN,
             "fmax": SpectrogramConfig.FMAX,
             "log_scale": SpectrogramConfig.LOG_SCALE,
+            "smoothing": SpectrogramConfig.SMOOTHING,
+            "smoothing_sigma": SpectrogramConfig.SMOOTHING_SIGMA,
             "normalize": SpectrogramConfig.NORMALIZE,
             "normalization_method": SpectrogramConfig.NORMALIZATION_METHOD,
             "max_frames": SpectrogramConfig.MAX_FRAMES,
+        },
+        "morse_smale": {
+            "implementation": MorseSmaleConfig.IMPLEMENTATION,
+            "graph_max_neighbors": MorseSmaleConfig.GRAPH_MAX_NEIGHBORS,
+            "graph_relaxed": MorseSmaleConfig.GRAPH_RELAXED,
+            "normalization": MorseSmaleConfig.NORMALIZATION,
+            "simplification": MorseSmaleConfig.SIMPLIFICATION,
+            "neighborhood_size": MorseSmaleConfig.NEIGHBORHOOD_SIZE,
+            "top_k_basins": MorseSmaleConfig.TOP_K_BASINS,
+            "include_extrema_values": MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
+            "top_k_extrema": MorseSmaleConfig.TOP_K_EXTREMA,
         },
     }
     encoded = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -342,10 +389,12 @@ def main() -> None:
         print("Evaluating on eval set...")
         eval_results = clf.evaluate(X_eval, y_eval)
         print(f"Eval AUC: {eval_results['auc']:.4f}")
+        print(f"Eval EER: {eval_results['eer']:.4f}")
         print(eval_results["report"])
 
         metrics = {
             "auc": float(eval_results["auc"]),
+            "eer": float(eval_results["eer"]),
             "n_train": len(y_train),
             "n_eval": len(y_eval),
             "n_bonafide_eval": int(np.sum(y_eval == 0)),
@@ -389,6 +438,7 @@ def main() -> None:
     cv_results = clf.cross_validate(X, y, n_folds=ClassifierConfig.CV_FOLDS)
     print(f"CV accuracy: {cv_results['accuracy_mean']:.3f} ± {cv_results['accuracy_std']:.3f}")
     print(f"CV AUC:      {cv_results['auc_mean']:.3f} ± {cv_results['auc_std']:.3f}")
+    print(f"CV EER:      {cv_results['eer_mean']:.3f} ± {cv_results['eer_std']:.3f}")
 
     with open(args.out_dir / "cv_results.json", "w") as f:
         json.dump(cv_results, f, indent=2)

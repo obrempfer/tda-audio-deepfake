@@ -75,6 +75,8 @@ class SpectrogramConfig:
         FMIN: Lower frequency bound for the mel filterbank (Hz).
         FMAX: Upper frequency bound for the mel filterbank (Hz or None).
         LOG_SCALE: Whether to convert power to log-power decibels.
+        SMOOTHING: Optional spectrogram smoothing ('none' or 'gaussian').
+        SMOOTHING_SIGMA: Standard deviation for Gaussian smoothing.
         NORMALIZE: Whether to normalize the grid before cubical PH.
         NORMALIZATION_METHOD: Grid normalization strategy ('minmax', 'zscore', 'none').
         MAX_FRAMES: Optional cap on time frames via uniform subsampling.
@@ -85,16 +87,46 @@ class SpectrogramConfig:
     FMIN: float = 0.0
     FMAX: Optional[float] = None
     LOG_SCALE: bool = True
+    SMOOTHING: str = "none"
+    SMOOTHING_SIGMA: float = 1.0
     NORMALIZE: bool = True
     NORMALIZATION_METHOD: str = "minmax"
     MAX_FRAMES: Optional[int] = 256
+
+
+class MorseSmaleConfig:
+    """Discrete Morse-Smale-inspired feature extraction on spectrogram grids.
+
+    Preferred path uses topopy's approximate Morse-Smale complex. A local
+    discrete fallback is available when topopy is unavailable.
+
+    Attributes:
+        IMPLEMENTATION: 'topopy' or 'approx'.
+        GRAPH_MAX_NEIGHBORS: Neighborhood size for topopy's graph construction.
+        GRAPH_RELAXED: Whether topopy/nglpy uses the relaxed empty-region graph.
+        NORMALIZATION: Optional topopy normalization mode ('feature', 'zscore', or None).
+        SIMPLIFICATION: topopy simplification mode.
+        NEIGHBORHOOD_SIZE: Window size for local extrema detection.
+        TOP_K_BASINS: Number of largest ascending/descending basins to keep.
+        INCLUDE_EXTREMA_VALUES: Whether to include strongest extrema values.
+        TOPO_K_EXTREMA: Number of strongest minima/maxima values to keep.
+    """
+    IMPLEMENTATION: str = "topopy"
+    GRAPH_MAX_NEIGHBORS: int = 8
+    GRAPH_RELAXED: bool = False
+    NORMALIZATION: Optional[str] = None
+    SIMPLIFICATION: str = "difference"
+    NEIGHBORHOOD_SIZE: int = 3
+    TOP_K_BASINS: int = 8
+    INCLUDE_EXTREMA_VALUES: bool = True
+    TOP_K_EXTREMA: int = 8
 
 
 class TopologyConfig:
     """Persistent homology computation parameters.
 
     Attributes:
-        COMPLEX: Topological complex family ('vietoris_rips', 'cubical', or 'knn_flag').
+        COMPLEX: Topological complex family ('vietoris_rips', 'cubical', 'knn_flag', 'morse_smale', or 'morse_smale_approx').
         MAX_HOMOLOGY_DIM: Highest homological dimension to compute (0=H0, 1=H1).
         DISTANCE_METRIC: Distance metric for Vietoris-Rips ('euclidean' or 'precomputed').
         CUBICAL_FILTRATION: Cubical filtration polarity ('sublevel' or 'superlevel').
@@ -209,6 +241,7 @@ def load_config_from_yaml(yaml_path: str) -> None:
         "feature": FeatureConfig,
         "point_cloud": PointCloudConfig,
         "spectrogram": SpectrogramConfig,
+        "morse_smale": MorseSmaleConfig,
         "topology": TopologyConfig,
         "vectorization": VectorizationConfig,
         "classifier": ClassifierConfig,

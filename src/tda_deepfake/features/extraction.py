@@ -14,6 +14,7 @@ from typing import Optional
 
 from sklearn.decomposition import PCA
 from sklearn.random_projection import GaussianRandomProjection
+from scipy.ndimage import gaussian_filter
 
 try:
     import librosa
@@ -134,6 +135,8 @@ def build_mel_spectrogram(
     fmin: float = SpectrogramConfig.FMIN,
     fmax: Optional[float] = SpectrogramConfig.FMAX,
     log_scale: bool = SpectrogramConfig.LOG_SCALE,
+    smoothing: str = SpectrogramConfig.SMOOTHING,
+    smoothing_sigma: float = SpectrogramConfig.SMOOTHING_SIGMA,
     normalize: bool = SpectrogramConfig.NORMALIZE,
     normalization_method: str = SpectrogramConfig.NORMALIZATION_METHOD,
     max_frames: Optional[int] = SpectrogramConfig.MAX_FRAMES,
@@ -158,6 +161,8 @@ def build_mel_spectrogram(
 
     if log_scale:
         grid = librosa.power_to_db(grid, ref=np.max)
+
+    grid = _smooth_grid(grid, method=smoothing, sigma=smoothing_sigma)
 
     if max_frames is not None and grid.shape[1] > max_frames:
         indices = np.linspace(0, grid.shape[1] - 1, max_frames, dtype=int)
@@ -275,6 +280,17 @@ def _normalize_grid(grid: npt.NDArray, method: str = "minmax") -> npt.NDArray:
             return np.zeros_like(grid)
         return (grid - lower) / (upper - lower)
     raise ValueError(f"Unknown grid normalization method: {method!r}")
+
+
+def _smooth_grid(grid: npt.NDArray, method: str = "none", sigma: float = 1.0) -> npt.NDArray:
+    """Apply optional smoothing to a spectrogram grid before cubical PH."""
+    if method == "none":
+        return grid
+    if sigma <= 0:
+        raise ValueError(f"smoothing sigma must be positive, got {sigma}")
+    if method == "gaussian":
+        return gaussian_filter(grid, sigma=float(sigma), mode="nearest")
+    raise ValueError(f"Unknown spectrogram smoothing method: {method!r}")
 
 
 def _append_praat_features(

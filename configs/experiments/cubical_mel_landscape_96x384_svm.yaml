@@ -1,0 +1,35 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+spectrogram:
+  kind: mel
+  n_mels: 96
+  power: 2.0
+  fmin: 0.0
+  fmax:
+  log_scale: true
+  smoothing: none
+  smoothing_sigma: 1.0
+  normalize: true
+  normalization_method: minmax
+  max_frames: 384
+
+topology:
+  complex: cubical
+  cubical_filtration: superlevel
+  max_homology_dim: 1
+
+vectorization:
+  method: landscape
+  landscape_n_layers: 5
+  landscape_n_bins: 100
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 1.0
+  cv_folds: 5
+  random_state: 42

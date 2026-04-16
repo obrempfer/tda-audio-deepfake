@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from tda_deepfake.topology.persistent_homology import compute_persistence
+from tda_deepfake.topology.morse_smale import compute_morse_smale_signature
 from tda_deepfake.topology.vectorization import vectorize_diagrams, _summary_statistics_vector
 
 
@@ -96,3 +97,15 @@ def test_knn_flag_statistics_vectorization_fixed_size():
     vec2 = vectorize_diagrams(dgms2, method="statistics")
 
     assert vec1.shape == vec2.shape
+
+
+def test_compute_morse_smale_signature_fixed_length():
+    grid1 = _random_grid(seed=0)
+    grid2 = _random_grid(seed=1)
+
+    vec1 = compute_morse_smale_signature(grid1, neighborhood_size=3, top_k_basins=4, top_k_extrema=4)
+    vec2 = compute_morse_smale_signature(grid2, neighborhood_size=3, top_k_basins=4, top_k_extrema=4)
+
+    assert vec1.ndim == 1
+    assert vec1.shape == vec2.shape
+    assert np.isfinite(vec1).all()

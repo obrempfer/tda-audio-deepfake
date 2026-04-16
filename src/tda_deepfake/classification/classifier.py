@@ -14,8 +14,9 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.base import clone
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, roc_curve
 
 from ..config import ClassifierConfig
 
@@ -115,13 +116,30 @@ class Classifier:
             Dict with keys 'accuracy', 'auc' (mean ± std across folds).
         """
         cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=self.random_state)
-        acc = cross_val_score(self.pipeline, X, y, cv=cv, scoring="accuracy")
-        auc = cross_val_score(self.pipeline, X, y, cv=cv, scoring="roc_auc")
+        acc_scores = []
+        auc_scores = []
+        eer_scores = []
+
+        for train_idx, test_idx in cv.split(X, y):
+            pipeline = clone(self.pipeline)
+            pipeline.fit(X[train_idx], y[train_idx])
+            y_pred = pipeline.predict(X[test_idx])
+            y_proba = pipeline.predict_proba(X[test_idx])[:, 1]
+
+            acc_scores.append(accuracy_score(y[test_idx], y_pred))
+            auc_scores.append(roc_auc_score(y[test_idx], y_proba))
+            eer_scores.append(_compute_eer(y[test_idx], y_proba))
+
+        acc = np.array(acc_scores, dtype=np.float64)
+        auc = np.array(auc_scores, dtype=np.float64)
+        eer = np.array(eer_scores, dtype=np.float64)
         return {
             "accuracy_mean": float(np.mean(acc)),
             "accuracy_std": float(np.std(acc)),
             "auc_mean": float(np.mean(auc)),
             "auc_std": float(np.std(auc)),
+            "eer_mean": float(np.mean(eer)),
+            "eer_std": float(np.std(eer)),
         }
 
     def evaluate(self, X: npt.NDArray, y: npt.NDArray) -> dict:
@@ -139,6 +157,7 @@ class Classifier:
         return {
             "report": classification_report(y, y_pred, target_names=["real", "fake"]),
             "auc": roc_auc_score(y, y_proba),
+            "eer": _compute_eer(y, y_proba),
         }
 
     def save(self, path: Union[str, Path]) -> None:
@@ -162,3 +181,11 @@ class Classifier:
         obj = cls.__new__(cls)
         obj.pipeline = joblib.load(path)
         return obj
+
+
+def _compute_eer(y_true: npt.NDArray, y_score: npt.NDArray) -> float:
+    """Compute equal error rate from binary labels and positive-class scores."""
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    fnr = 1.0 - tpr
+    idx = int(np.nanargmin(np.abs(fpr - fnr)))
+    return float((fpr[idx] + fnr[idx]) / 2.0)

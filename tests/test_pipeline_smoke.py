@@ -8,9 +8,10 @@ import numpy as np
 import pytest
 
 from scripts.run_pipeline import _feature_cache_key, _subsample_samples
-from tda_deepfake.config import FeatureConfig, PointCloudConfig, TopologyConfig, VectorizationConfig
+from tda_deepfake.config import FeatureConfig, PointCloudConfig, SpectrogramConfig, TopologyConfig, VectorizationConfig
 from tda_deepfake.features.extraction import extract_features, build_point_cloud, build_mel_spectrogram
 from tda_deepfake.topology.persistent_homology import compute_persistence
+from tda_deepfake.topology.morse_smale import compute_morse_smale_signature
 from tda_deepfake.topology.vectorization import vectorize_diagrams
 from tda_deepfake.classification.classifier import Classifier
 
@@ -52,8 +53,10 @@ def test_full_pipeline_smoke():
 
     metrics = clf.evaluate(X, y)
     assert "auc" in metrics
+    assert "eer" in metrics
     assert "report" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
+    assert 0.0 <= metrics["eer"] <= 1.0
 
 
 def test_full_cubical_pipeline_smoke():
@@ -78,7 +81,9 @@ def test_full_cubical_pipeline_smoke():
 
     assert X.shape[0] == n_samples
     assert "auc" in metrics
+    assert "eer" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
+    assert 0.0 <= metrics["eer"] <= 1.0
 
 
 def test_full_knn_flag_pipeline_smoke():
@@ -110,7 +115,35 @@ def test_full_knn_flag_pipeline_smoke():
 
     assert X.shape[0] == n_samples
     assert "auc" in metrics
+    assert "eer" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
+    assert 0.0 <= metrics["eer"] <= 1.0
+
+
+def test_full_morse_smale_pipeline_smoke():
+    """End-to-end: synthetic audio -> mel grid -> Morse-Smale-inspired signature -> SVM."""
+    n_samples = 10
+    X_list, y_list = [], []
+
+    for i in range(n_samples):
+        audio = _synthetic_audio(seed=i)
+        grid = build_mel_spectrogram(audio, n_mels=24, max_frames=32)
+        vec = compute_morse_smale_signature(grid, neighborhood_size=3, top_k_basins=4, top_k_extrema=4)
+        X_list.append(vec)
+        y_list.append(i % 2)
+
+    X = np.stack(X_list)
+    y = np.array(y_list)
+
+    clf = Classifier(model="svm")
+    clf.fit(X, y)
+    metrics = clf.evaluate(X, y)
+
+    assert X.shape[0] == n_samples
+    assert "auc" in metrics
+    assert "eer" in metrics
+    assert 0.0 <= metrics["auc"] <= 1.0
+    assert 0.0 <= metrics["eer"] <= 1.0
 
 
 def test_feature_vector_fixed_length():
@@ -240,3 +273,33 @@ def test_feature_cache_key_changes_with_knn_graph_parameters():
         TopologyConfig.KNN_K = original_k
 
     assert key_k10 != key_k20
+
+
+def test_feature_cache_key_changes_with_spectrogram_smoothing():
+    original_smoothing = SpectrogramConfig.SMOOTHING
+    try:
+        SpectrogramConfig.SMOOTHING = "none"
+        key_unsmoothed = _feature_cache_key("landscape", n_bins=20, max_points=300)
+
+        SpectrogramConfig.SMOOTHING = "gaussian"
+        key_smoothed = _feature_cache_key("landscape", n_bins=20, max_points=300)
+    finally:
+        SpectrogramConfig.SMOOTHING = original_smoothing
+
+    assert key_unsmoothed != key_smoothed
+
+
+def test_feature_cache_key_changes_with_morse_smale_config():
+    from tda_deepfake.config import MorseSmaleConfig
+
+    original_top_k = MorseSmaleConfig.TOP_K_BASINS
+    try:
+        MorseSmaleConfig.TOP_K_BASINS = 4
+        key_small = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        MorseSmaleConfig.TOP_K_BASINS = 8
+        key_large = _feature_cache_key("statistics", n_bins=20, max_points=300)
+    finally:
+        MorseSmaleConfig.TOP_K_BASINS = original_top_k
+
+    assert key_small != key_large

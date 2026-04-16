@@ -1,0 +1,42 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+spectrogram:
+  kind: mel
+  n_mels: 64
+  power: 2.0
+  fmin: 0.0
+  fmax:
+  log_scale: true
+  smoothing: none
+  smoothing_sigma: 1.0
+  normalize: true
+  normalization_method: minmax
+  max_frames: 256
+
+morse_smale:
+  implementation: topopy
+  graph_max_neighbors: 8
+  graph_relaxed: false
+  normalization:
+  simplification: difference
+  neighborhood_size: 3
+  top_k_basins: 8
+  include_extrema_values: true
+  top_k_extrema: 8
+
+topology:
+  complex: morse_smale
+
+vectorization:
+  method: statistics
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 1.0
+  cv_folds: 5
+  random_state: 42

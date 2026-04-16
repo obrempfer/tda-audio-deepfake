@@ -104,3 +104,24 @@ def test_build_mel_spectrogram_normalization_methods(method: str):
     if method == "minmax":
         assert np.min(grid) >= 0.0
         assert np.max(grid) <= 1.0
+
+
+def test_build_mel_spectrogram_gaussian_smoothing_changes_grid():
+    audio = _synthetic_audio(duration_s=0.5)
+    unsmoothed = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        smoothing="none",
+    )
+    smoothed = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        smoothing="gaussian",
+        smoothing_sigma=1.0,
+    )
+
+    assert unsmoothed.shape == smoothed.shape
+    assert np.isfinite(smoothed).all()
+    assert not np.allclose(unsmoothed, smoothed)
