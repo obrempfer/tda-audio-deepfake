@@ -135,8 +135,12 @@ def build_mel_spectrogram(
     fmin: float = SpectrogramConfig.FMIN,
     fmax: Optional[float] = SpectrogramConfig.FMAX,
     log_scale: bool = SpectrogramConfig.LOG_SCALE,
+    compression: str = SpectrogramConfig.COMPRESSION,
     smoothing: str = SpectrogramConfig.SMOOTHING,
     smoothing_sigma: float = SpectrogramConfig.SMOOTHING_SIGMA,
+    smoothing_axis: str = SpectrogramConfig.SMOOTHING_AXIS,
+    energy_gate_percentile: Optional[float] = SpectrogramConfig.ENERGY_GATE_PERCENTILE,
+    energy_gate_fill: str = SpectrogramConfig.ENERGY_GATE_FILL,
     normalize: bool = SpectrogramConfig.NORMALIZE,
     normalization_method: str = SpectrogramConfig.NORMALIZATION_METHOD,
     max_frames: Optional[int] = SpectrogramConfig.MAX_FRAMES,
@@ -159,10 +163,24 @@ def build_mel_spectrogram(
         fmax=fmax,
     ).astype(np.float64)
 
-    if log_scale:
-        grid = librosa.power_to_db(grid, ref=np.max)
+    grid = _apply_energy_gate(
+        grid,
+        percentile=energy_gate_percentile,
+        fill=energy_gate_fill,
+    )
 
-    grid = _smooth_grid(grid, method=smoothing, sigma=smoothing_sigma)
+    grid = _compress_grid(
+        grid,
+        compression=compression,
+        log_scale=log_scale,
+    )
+
+    grid = _smooth_grid(
+        grid,
+        method=smoothing,
+        sigma=smoothing_sigma,
+        axis=smoothing_axis,
+    )
 
     if max_frames is not None and grid.shape[1] > max_frames:
         indices = np.linspace(0, grid.shape[1] - 1, max_frames, dtype=int)
@@ -282,15 +300,80 @@ def _normalize_grid(grid: npt.NDArray, method: str = "minmax") -> npt.NDArray:
     raise ValueError(f"Unknown grid normalization method: {method!r}")
 
 
-def _smooth_grid(grid: npt.NDArray, method: str = "none", sigma: float = 1.0) -> npt.NDArray:
+def _smooth_grid(
+    grid: npt.NDArray,
+    method: str = "none",
+    sigma: float = 1.0,
+    axis: str = "both",
+) -> npt.NDArray:
     """Apply optional smoothing to a spectrogram grid before cubical PH."""
     if method == "none":
         return grid
     if sigma <= 0:
         raise ValueError(f"smoothing sigma must be positive, got {sigma}")
     if method == "gaussian":
-        return gaussian_filter(grid, sigma=float(sigma), mode="nearest")
+        axis_mode = axis.lower()
+        if axis_mode == "both":
+            sigma_vec = (float(sigma), float(sigma))
+        elif axis_mode == "frequency":
+            sigma_vec = (float(sigma), 0.0)
+        elif axis_mode == "time":
+            sigma_vec = (0.0, float(sigma))
+        else:
+            raise ValueError(f"Unknown smoothing axis mode: {axis!r}")
+        return gaussian_filter(grid, sigma=sigma_vec, mode="nearest")
     raise ValueError(f"Unknown spectrogram smoothing method: {method!r}")
+
+
+def _compress_grid(
+    grid: npt.NDArray,
+    compression: str = "auto",
+    log_scale: bool = True,
+) -> npt.NDArray:
+    """Apply dynamic-range compression to a spectrogram grid."""
+    mode = (compression or "auto").lower()
+    if mode == "auto":
+        mode = "db" if log_scale else "none"
+
+    if mode == "none":
+        return grid
+    if mode == "db":
+        return librosa.power_to_db(grid, ref=np.max)
+    if mode == "log1p":
+        return np.log1p(np.maximum(grid, 0.0))
+    if mode == "root":
+        return np.sqrt(np.maximum(grid, 0.0))
+    raise ValueError(f"Unknown spectrogram compression mode: {compression!r}")
+
+
+def _apply_energy_gate(
+    grid: npt.NDArray,
+    percentile: Optional[float] = None,
+    fill: str = "zero",
+) -> npt.NDArray:
+    """Suppress low-energy frames as a simple voiced-region gate."""
+    if percentile is None:
+        return grid
+    if percentile < 0.0 or percentile > 100.0:
+        raise ValueError(f"energy gate percentile must be in [0, 100], got {percentile}")
+
+    frame_energy = np.mean(grid, axis=0)
+    threshold = np.percentile(frame_energy, percentile)
+    mask = frame_energy < threshold
+    if not np.any(mask):
+        return grid
+
+    out = grid.copy()
+    fill_mode = fill.lower()
+    if fill_mode == "zero":
+        fill_value = 0.0
+    elif fill_mode == "min":
+        fill_value = float(np.min(grid))
+    else:
+        raise ValueError(f"Unknown energy gate fill mode: {fill!r}")
+
+    out[:, mask] = fill_value
+    return out
 
 
 def _append_praat_features(

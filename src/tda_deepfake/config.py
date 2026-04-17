@@ -74,9 +74,13 @@ class SpectrogramConfig:
         POWER: Exponent for mel-spectrogram magnitude construction.
         FMIN: Lower frequency bound for the mel filterbank (Hz).
         FMAX: Upper frequency bound for the mel filterbank (Hz or None).
-        LOG_SCALE: Whether to convert power to log-power decibels.
+        LOG_SCALE: Legacy toggle for dB scaling (kept for backward compatibility).
+        COMPRESSION: Dynamic-range compression ('auto', 'none', 'db', 'log1p', 'root').
         SMOOTHING: Optional spectrogram smoothing ('none' or 'gaussian').
         SMOOTHING_SIGMA: Standard deviation for Gaussian smoothing.
+        SMOOTHING_AXIS: Where smoothing is applied ('both', 'time', 'frequency').
+        ENERGY_GATE_PERCENTILE: Optional frame-energy percentile gate (0-100, None disables).
+        ENERGY_GATE_FILL: Fill strategy for gated frames ('zero' or 'min').
         NORMALIZE: Whether to normalize the grid before cubical PH.
         NORMALIZATION_METHOD: Grid normalization strategy ('minmax', 'zscore', 'none').
         MAX_FRAMES: Optional cap on time frames via uniform subsampling.
@@ -87,8 +91,12 @@ class SpectrogramConfig:
     FMIN: float = 0.0
     FMAX: Optional[float] = None
     LOG_SCALE: bool = True
+    COMPRESSION: str = "auto"
     SMOOTHING: str = "none"
     SMOOTHING_SIGMA: float = 1.0
+    SMOOTHING_AXIS: str = "both"
+    ENERGY_GATE_PERCENTILE: Optional[float] = None
+    ENERGY_GATE_FILL: str = "zero"
     NORMALIZE: bool = True
     NORMALIZATION_METHOD: str = "minmax"
     MAX_FRAMES: Optional[int] = 256
