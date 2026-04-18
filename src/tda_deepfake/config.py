@@ -182,12 +182,14 @@ class ClassifierConfig:
         MODEL: Classifier type ('svm' or 'logistic').
         SVM_KERNEL: SVM kernel type.
         SVM_C: SVM regularization parameter.
+        SCALE_FEATURES: Whether to apply StandardScaler before the classifier.
         CV_FOLDS: Number of cross-validation folds.
         RANDOM_STATE: Random seed for reproducibility.
     """
     MODEL: str = "svm"
     SVM_KERNEL: str = "rbf"
     SVM_C: float = 1.0
+    SCALE_FEATURES: bool = True
     CV_FOLDS: int = 5
     RANDOM_STATE: int = 42
 

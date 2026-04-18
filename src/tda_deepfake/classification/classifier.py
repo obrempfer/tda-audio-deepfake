@@ -39,6 +39,7 @@ class Classifier:
         model: Literal["svm", "logistic"] = ClassifierConfig.MODEL,
         svm_kernel: str = ClassifierConfig.SVM_KERNEL,
         svm_c: float = ClassifierConfig.SVM_C,
+        scale_features: bool = ClassifierConfig.SCALE_FEATURES,
         random_state: int = ClassifierConfig.RANDOM_STATE,
     ) -> None:
         self.model_type = model
@@ -59,10 +60,11 @@ class Classifier:
         else:
             raise ValueError(f"Unknown model type: {model!r}")
 
-        self.pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", clf),
-        ])
+        steps = []
+        if scale_features:
+            steps.append(("scaler", StandardScaler()))
+        steps.append(("clf", clf))
+        self.pipeline = Pipeline(steps)
 
     def fit(self, X: npt.NDArray, y: npt.NDArray) -> "Classifier":
         """Fit the classifier on training data.

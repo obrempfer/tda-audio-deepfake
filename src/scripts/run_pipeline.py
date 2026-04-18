@@ -389,6 +389,7 @@ def main() -> None:
             model=model,
             svm_kernel=ClassifierConfig.SVM_KERNEL,
             svm_c=ClassifierConfig.SVM_C,
+            scale_features=ClassifierConfig.SCALE_FEATURES,
             random_state=ClassifierConfig.RANDOM_STATE,
         )
         clf.fit(X_train, y_train)
@@ -442,6 +443,7 @@ def main() -> None:
         model=model,
         svm_kernel=ClassifierConfig.SVM_KERNEL,
         svm_c=ClassifierConfig.SVM_C,
+        scale_features=ClassifierConfig.SCALE_FEATURES,
         random_state=ClassifierConfig.RANDOM_STATE,
     )
     cv_results = clf.cross_validate(X, y, n_folds=ClassifierConfig.CV_FOLDS)
