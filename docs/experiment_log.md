@@ -59,6 +59,11 @@ This file is the running record for benchmark setup, implementation changes that
 | 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | mel spectrogram (`64 x <=256`, sublevel, `db`, gate 10%, no grid normalization) | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | 0.894 ± 0.010 | 0.963 ± 0.008 | Current best cubical-only CV result; EER `0.095 ± 0.004` |
 | 2026-04-17 | train→dev held-out eval (`train n=1000`, `dev n=5000 balanced subset`) | best cubical field config | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | 0.900 | 0.959 | Held-out check preserves sub-10 behavior; EER `0.099` |
 | 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | best cubical field config, homology ablation | n/a | landscape | SVM | varies | varies | H0 only: `AUC 0.732, EER 0.318`; H1 only: `AUC 0.942, EER 0.137`; H0+H1: `AUC 0.963, EER 0.095` |
+| 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun reference (`db`, gate 10%, no grid normalization) | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | 0.890 ± 0.013 | 0.946 ± 0.013 | Local-machine rerun anchor for subsequent ablations; EER `0.124 ± 0.020` |
+| 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, homology ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | H0 only: `AUC 0.739, EER 0.318`; H1 only: `AUC 0.924, EER 0.141`; H0+H1: `AUC 0.946, EER 0.124` |
+| 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, energy-gate ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | gate off: `AUC 0.927, EER 0.163`; gate 8: `AUC 0.945, EER 0.126`; gate 12: `AUC 0.947, EER 0.115`; gate 16: `AUC 0.947, EER 0.120` |
+| 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, compression ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | `db` best by large margin in this sweep; `log1p`: `AUC 0.716, EER 0.351`; `root`: `AUC 0.767, EER 0.307`; `none`: `AUC 0.695, EER 0.351` |
+| 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, grid normalization ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | no normalization: `AUC 0.946, EER 0.124`; minmax: `AUC 0.943, EER 0.118`; zscore: `AUC 0.946, EER 0.108` |
 
 ## Current Read
 
@@ -69,6 +74,7 @@ This file is the running record for benchmark setup, implementation changes that
   - Frame-energy gating (`~10-20%`) was the largest single gain.
   - Disabling grid normalization helped once gating/compression were tuned.
   - Slightly denser landscape vectorization (`layers=7`, `bins=120`) pushed CV below 10% EER.
+- Local reruns confirmed the same qualitative ablation ranking (H1 >> H0, gateing helps, `db` compression is critical), but absolute metrics were weaker than the previous best-seen run. This needs seed and environment variance checks before declaring a new stable best.
 - Best cubical-only bounded CV result so far: `AUC 0.963`, `EER 0.095` (`n=1000`, balanced train CV).
 - Held-out train→dev check (`train n=1000`, `dev n=5000 balanced subset`) remained strong: `AUC 0.959`, `EER 0.099`.
 - Homology ablation indicates H1 carries most of the discriminative power, but H0+H1 together remain better than H1-only on the current best config.
@@ -76,8 +82,8 @@ This file is the running record for benchmark setup, implementation changes that
 
 ## Next Runs
 
-1. Run full held-out dev evaluation (all dev items, not the balanced subset) with `cubical_mel_best_field_svm.yaml`.
-2. Run held-out eval (`ASVspoof2019.LA.cm.eval.trl.txt`) with the same frozen best config.
-3. Repeat held-out train→dev with 2-3 alternative train seeds to quantify variance for the `n=1000` training cap.
-4. If more performance is needed, tune calibration/thresholding on held-out dev scores rather than broad upstream hyperparameter sweeps.
+1. Add frequency-band masking ablation (low / mid / high mel bands) against the frozen cubical reference.
+2. Run held-out dev/eval checks for the strongest local ablation variants (gate `12/16`, normalization `zscore`) to verify whether CV gains transfer.
+3. Repeat train-CV ablation block with 2-3 train seeds to separate real gains from split variance.
+4. Keep classifier `C` sweeps as robustness/sensitivity checks, separate from the main ablation section.
 5. Keep Morse/VR/kNN as ablation and interpretability branches, but treat cubical best-field as the primary detector branch.
