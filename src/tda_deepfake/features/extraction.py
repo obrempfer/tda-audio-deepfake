@@ -139,6 +139,14 @@ def build_mel_spectrogram(
     smoothing: str = SpectrogramConfig.SMOOTHING,
     smoothing_sigma: float = SpectrogramConfig.SMOOTHING_SIGMA,
     smoothing_axis: str = SpectrogramConfig.SMOOTHING_AXIS,
+    band_mask_mode: str = SpectrogramConfig.BAND_MASK_MODE,
+    band_split_low: float = SpectrogramConfig.BAND_SPLIT_LOW,
+    band_split_high: float = SpectrogramConfig.BAND_SPLIT_HIGH,
+    band_mask_fill: str = SpectrogramConfig.BAND_MASK_FILL,
+    temporal_field_mode: str = SpectrogramConfig.TEMPORAL_FIELD_MODE,
+    temporal_field_sigma: float = SpectrogramConfig.TEMPORAL_FIELD_SIGMA,
+    energy_weighting_mode: str = SpectrogramConfig.ENERGY_WEIGHTING_MODE,
+    energy_weighting_gamma: float = SpectrogramConfig.ENERGY_WEIGHTING_GAMMA,
     energy_gate_percentile: Optional[float] = SpectrogramConfig.ENERGY_GATE_PERCENTILE,
     energy_gate_fill: str = SpectrogramConfig.ENERGY_GATE_FILL,
     normalize: bool = SpectrogramConfig.NORMALIZE,
@@ -163,6 +171,14 @@ def build_mel_spectrogram(
         fmax=fmax,
     ).astype(np.float64)
 
+    grid = _apply_band_mask(
+        grid,
+        mode=band_mask_mode,
+        split_low=band_split_low,
+        split_high=band_split_high,
+        fill=band_mask_fill,
+    )
+
     grid = _apply_energy_gate(
         grid,
         percentile=energy_gate_percentile,
@@ -173,6 +189,18 @@ def build_mel_spectrogram(
         grid,
         compression=compression,
         log_scale=log_scale,
+    )
+
+    grid = _apply_temporal_field_transform(
+        grid,
+        mode=temporal_field_mode,
+        sigma=temporal_field_sigma,
+    )
+
+    grid = _apply_energy_weighting(
+        grid,
+        mode=energy_weighting_mode,
+        gamma=energy_weighting_gamma,
     )
 
     grid = _smooth_grid(
@@ -374,6 +402,117 @@ def _apply_energy_gate(
 
     out[:, mask] = fill_value
     return out
+
+
+def _apply_band_mask(
+    grid: npt.NDArray,
+    mode: str = "none",
+    split_low: float = 0.33,
+    split_high: float = 0.66,
+    fill: str = "zero",
+) -> npt.NDArray:
+    """Apply optional mel-band masking for frequency-region ablations."""
+    ablation_mode = (mode or "none").lower()
+    if ablation_mode == "none":
+        return grid
+    valid_modes = {
+        "drop_low",
+        "drop_mid",
+        "drop_high",
+        "keep_low",
+        "keep_mid",
+        "keep_high",
+    }
+    if ablation_mode not in valid_modes:
+        raise ValueError(f"Unknown band mask mode: {mode!r}")
+    if not (0.0 < split_low < split_high < 1.0):
+        raise ValueError(
+            "band split fractions must satisfy 0 < split_low < split_high < 1; "
+            f"got split_low={split_low}, split_high={split_high}"
+        )
+
+    n_mels = grid.shape[0]
+    low_end = int(np.floor(split_low * n_mels))
+    high_start = int(np.floor(split_high * n_mels))
+    # Keep all segments non-empty for predictable ablations.
+    low_end = max(1, min(low_end, n_mels - 2))
+    high_start = max(low_end + 1, min(high_start, n_mels - 1))
+
+    low = slice(0, low_end)
+    mid = slice(low_end, high_start)
+    high = slice(high_start, n_mels)
+
+    fill_mode = fill.lower()
+    if fill_mode == "zero":
+        fill_value = 0.0
+    elif fill_mode == "min":
+        fill_value = float(np.min(grid))
+    else:
+        raise ValueError(f"Unknown band mask fill mode: {fill!r}")
+
+    out = grid.copy()
+
+    if ablation_mode == "drop_low":
+        out[low, :] = fill_value
+    elif ablation_mode == "drop_mid":
+        out[mid, :] = fill_value
+    elif ablation_mode == "drop_high":
+        out[high, :] = fill_value
+    elif ablation_mode == "keep_low":
+        out[mid, :] = fill_value
+        out[high, :] = fill_value
+    elif ablation_mode == "keep_mid":
+        out[low, :] = fill_value
+        out[high, :] = fill_value
+    elif ablation_mode == "keep_high":
+        out[low, :] = fill_value
+        out[mid, :] = fill_value
+
+    return out
+
+
+def _apply_temporal_field_transform(
+    grid: npt.NDArray,
+    mode: str = "none",
+    sigma: float = 2.0,
+) -> npt.NDArray:
+    """Apply optional temporal-structure transform on the spectrogram field."""
+    transform_mode = (mode or "none").lower()
+    if transform_mode == "none":
+        return grid
+    if sigma <= 0:
+        raise ValueError(f"temporal field sigma must be positive, got {sigma}")
+
+    smoothed_time = gaussian_filter(grid, sigma=(0.0, float(sigma)), mode="nearest")
+    if transform_mode == "sustained":
+        return smoothed_time
+    if transform_mode == "transition":
+        return np.abs(grid - smoothed_time)
+    raise ValueError(f"Unknown temporal field mode: {mode!r}")
+
+
+def _apply_energy_weighting(
+    grid: npt.NDArray,
+    mode: str = "none",
+    gamma: float = 1.0,
+) -> npt.NDArray:
+    """Apply optional frame-energy weighting on a spectrogram field."""
+    weighting_mode = (mode or "none").lower()
+    if weighting_mode == "none":
+        return grid
+    if weighting_mode != "power":
+        raise ValueError(f"Unknown energy weighting mode: {mode!r}")
+    if gamma <= 0:
+        raise ValueError(f"energy weighting gamma must be positive, got {gamma}")
+
+    shifted = grid - np.min(grid)
+    frame_energy = np.mean(shifted, axis=0)
+    scale = float(np.max(frame_energy))
+    if scale <= 0.0:
+        return grid
+    normalized = frame_energy / scale
+    weights = normalized ** float(gamma)
+    return grid * weights[np.newaxis, :]
 
 
 def _append_praat_features(

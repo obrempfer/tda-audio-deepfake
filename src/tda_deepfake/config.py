@@ -79,6 +79,16 @@ class SpectrogramConfig:
         SMOOTHING: Optional spectrogram smoothing ('none' or 'gaussian').
         SMOOTHING_SIGMA: Standard deviation for Gaussian smoothing.
         SMOOTHING_AXIS: Where smoothing is applied ('both', 'time', 'frequency').
+        BAND_MASK_MODE: Optional mel-band masking mode
+            ('none', 'drop_low', 'drop_mid', 'drop_high', 'keep_low', 'keep_mid', 'keep_high').
+        BAND_SPLIT_LOW: Fractional mel-bin boundary for low/mid split.
+        BAND_SPLIT_HIGH: Fractional mel-bin boundary for mid/high split.
+        BAND_MASK_FILL: Fill strategy for masked mel bands ('zero' or 'min').
+        TEMPORAL_FIELD_MODE: Optional time-structure transform
+            ('none', 'transition', 'sustained').
+        TEMPORAL_FIELD_SIGMA: Time-axis smoothing sigma for temporal transforms.
+        ENERGY_WEIGHTING_MODE: Optional frame-energy weighting mode ('none', 'power').
+        ENERGY_WEIGHTING_GAMMA: Exponent for power energy weighting.
         ENERGY_GATE_PERCENTILE: Optional frame-energy percentile gate (0-100, None disables).
         ENERGY_GATE_FILL: Fill strategy for gated frames ('zero' or 'min').
         NORMALIZE: Whether to normalize the grid before cubical PH.
@@ -95,6 +105,14 @@ class SpectrogramConfig:
     SMOOTHING: str = "none"
     SMOOTHING_SIGMA: float = 1.0
     SMOOTHING_AXIS: str = "both"
+    BAND_MASK_MODE: str = "none"
+    BAND_SPLIT_LOW: float = 0.33
+    BAND_SPLIT_HIGH: float = 0.66
+    BAND_MASK_FILL: str = "zero"
+    TEMPORAL_FIELD_MODE: str = "none"
+    TEMPORAL_FIELD_SIGMA: float = 2.0
+    ENERGY_WEIGHTING_MODE: str = "none"
+    ENERGY_WEIGHTING_GAMMA: float = 1.0
     ENERGY_GATE_PERCENTILE: Optional[float] = None
     ENERGY_GATE_FILL: str = "zero"
     NORMALIZE: bool = True

@@ -125,3 +125,109 @@ def test_build_mel_spectrogram_gaussian_smoothing_changes_grid():
     assert unsmoothed.shape == smoothed.shape
     assert np.isfinite(smoothed).all()
     assert not np.allclose(unsmoothed, smoothed)
+
+
+@pytest.mark.parametrize("mode,masked_slice", [
+    ("drop_low", slice(0, 5)),
+    ("drop_mid", slice(5, 10)),
+    ("drop_high", slice(10, 16)),
+])
+def test_build_mel_spectrogram_band_drop_masks_expected_region(mode: str, masked_slice: slice):
+    audio = _synthetic_audio(duration_s=0.5)
+    grid = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="none",
+        smoothing="none",
+        normalize=False,
+        band_mask_mode=mode,
+        band_split_low=0.33,
+        band_split_high=0.66,
+    )
+
+    assert np.isfinite(grid).all()
+    assert np.allclose(grid[masked_slice, :], 0.0)
+
+
+@pytest.mark.parametrize("mode,kept_slice", [
+    ("keep_low", slice(0, 5)),
+    ("keep_mid", slice(5, 10)),
+    ("keep_high", slice(10, 16)),
+])
+def test_build_mel_spectrogram_band_keep_masks_complement(mode: str, kept_slice: slice):
+    audio = _synthetic_audio(duration_s=0.5)
+    grid = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="none",
+        smoothing="none",
+        normalize=False,
+        band_mask_mode=mode,
+        band_split_low=0.33,
+        band_split_high=0.66,
+    )
+
+    assert np.isfinite(grid).all()
+    # Kept region should preserve some nonzero energy for a sine test tone.
+    assert np.any(grid[kept_slice, :] > 0.0)
+    # Everything else should be fully masked.
+    mask = np.ones_like(grid, dtype=bool)
+    mask[kept_slice, :] = False
+    assert np.allclose(grid[mask], 0.0)
+
+
+@pytest.mark.parametrize("mode", ["transition", "sustained"])
+def test_build_mel_spectrogram_temporal_field_modes(mode: str):
+    audio = _synthetic_audio(duration_s=0.5)
+    base = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="db",
+        smoothing="none",
+        normalize=False,
+        temporal_field_mode="none",
+    )
+    transformed = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="db",
+        smoothing="none",
+        normalize=False,
+        temporal_field_mode=mode,
+        temporal_field_sigma=2.0,
+    )
+
+    assert np.isfinite(transformed).all()
+    assert transformed.shape == base.shape
+    assert not np.allclose(transformed, base)
+
+
+def test_build_mel_spectrogram_energy_weighting_changes_grid():
+    audio = _synthetic_audio(duration_s=0.5)
+    base = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="db",
+        smoothing="none",
+        normalize=False,
+        energy_weighting_mode="none",
+    )
+    weighted = build_mel_spectrogram(
+        audio,
+        n_mels=16,
+        max_frames=20,
+        compression="db",
+        smoothing="none",
+        normalize=False,
+        energy_weighting_mode="power",
+        energy_weighting_gamma=2.0,
+    )
+
+    assert np.isfinite(weighted).all()
+    assert weighted.shape == base.shape
+    assert not np.allclose(weighted, base)

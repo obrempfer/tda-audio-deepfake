@@ -1,0 +1,48 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+spectrogram:
+  kind: mel
+  n_mels: 64
+  power: 2.0
+  fmin: 0.0
+  fmax:
+  log_scale: true
+  compression: db
+  smoothing: gaussian
+  smoothing_sigma: 0.5
+  smoothing_axis: both
+  band_mask_mode: none
+  band_split_low: 0.33
+  band_split_high: 0.66
+  band_mask_fill: zero
+  temporal_field_mode: none
+  temporal_field_sigma: 2.0
+  energy_weighting_mode: power
+  energy_weighting_gamma: 3.0
+  energy_gate_percentile: 10
+  energy_gate_fill: zero
+  normalize: false
+  normalization_method: none
+  max_frames: 256
+
+topology:
+  complex: cubical
+  cubical_filtration: sublevel
+  max_homology_dim: 1
+
+vectorization:
+  method: landscape
+  landscape_n_layers: 7
+  landscape_n_bins: 120
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 4.0
+  cv_folds: 5
+  random_state: 42
+
