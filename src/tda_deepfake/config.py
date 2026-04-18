@@ -163,6 +163,8 @@ class VectorizationConfig:
         PI_WEIGHT: Weight function ('linear' or 'persistence').
         LANDSCAPE_N_LAYERS: Number of landscape layers to compute.
         LANDSCAPE_N_BINS: Resolution of each landscape layer.
+        HOMOLOGY_WEIGHTS: Optional per-dimension scaling applied after
+            vectorization (e.g., [1.0, 0.5] scales H1 by 0.5).
     """
     METHOD: str = "persistence_image"
     PI_N_BINS: int = 20
@@ -170,6 +172,7 @@ class VectorizationConfig:
     PI_WEIGHT: str = "linear"
     LANDSCAPE_N_LAYERS: int = 5
     LANDSCAPE_N_BINS: int = 100
+    HOMOLOGY_WEIGHTS: Optional[list[float]] = None
 
 
 class ClassifierConfig:
