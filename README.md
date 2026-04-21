@@ -83,6 +83,12 @@ data/raw/ASVspoof2019_LA/
 └── ASVspoof2019_LA_dev/flac/
 ```
 
+Cross-dataset transfer (e.g., 2019 -> 2021) is supported by passing
+explicit `--train-*` and `--eval-*` paths at runtime. For ASVspoof 2021 LA,
+you can point `--eval-protocol` directly at `keys/LA/CM/trial_metadata.txt`
+and `--eval-audio-dir` at the corresponding audio directory; the loader now
+detects `bonafide`/`spoof` labels without assuming a fixed column position.
+
 ## Pipeline
 
 ```
