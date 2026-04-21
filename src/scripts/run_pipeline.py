@@ -63,6 +63,9 @@ def parse_args() -> argparse.Namespace:
     # Shared options
     parser.add_argument("--out-dir", type=Path, default=Path("data/results/default"),
                         help="Output directory for results")
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Optional shared feature cache directory. "
+                             "If omitted, uses <out-dir>/feature_cache")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Cap on number of samples (useful for quick smoke tests)")
     parser.add_argument("--method", default=None,
@@ -370,7 +373,9 @@ def main() -> None:
     n_bins = args.n_bins or VectorizationConfig.PI_N_BINS
     max_points = args.max_points or 300
 
-    cache_dir = args.out_dir / "feature_cache"
+    cache_dir = args.cache_dir or (args.out_dir / "feature_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Using feature cache at {cache_dir}")
 
     # ------------------------------------------------------------------ #
     # Mode B: train/eval                                                   #
