@@ -22,6 +22,7 @@ This file is the running record for benchmark setup, implementation changes that
   dynamic-range compression mode (`db` / `log1p` / `root` / `none` / `auto`), smoothing axis (`both` / `time` / `frequency`), and frame-energy gating (`energy_gate_percentile`, `energy_gate_fill`).
 - `2026-04-17`: added `configs/experiments/cubical_mel_best_field_svm.yaml` to capture the current best cubical setup in one reproducible config.
 - `2026-04-17`: added optional homology-block weighting (`vectorization.homology_weights`) and a classifier scaler toggle (`classifier.scale_features`) to support H0/H1 ablation experiments.
+- `2026-04-18`: added frequency-band masking configs around the best cubical field setup, including low/mid/high keep/drop variants and finer low-band splits. These runs test whether the detector is using broad spectrogram structure or a localized frequency region.
 
 ## Results
 
@@ -64,6 +65,11 @@ This file is the running record for benchmark setup, implementation changes that
 | 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, energy-gate ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | gate off: `AUC 0.927, EER 0.163`; gate 8: `AUC 0.945, EER 0.126`; gate 12: `AUC 0.947, EER 0.115`; gate 16: `AUC 0.947, EER 0.120` |
 | 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, compression ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | `db` best by large margin in this sweep; `log1p`: `AUC 0.716, EER 0.351`; `root`: `AUC 0.767, EER 0.307`; `none`: `AUC 0.695, EER 0.351` |
 | 2026-04-17 | balanced train CV, bounded subset (`n=1000`) | local rerun, grid normalization ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | no normalization: `AUC 0.946, EER 0.124`; minmax: `AUC 0.943, EER 0.118`; zscore: `AUC 0.946, EER 0.108` |
+| 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | best cubical field config, frequency-band ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | Low-band structure dominates: keep low `Acc 0.927, AUC 0.974, EER 0.075`; drop low `AUC 0.820, EER 0.265`; keep mid `AUC 0.793, EER 0.287`; keep high `AUC 0.820, EER 0.247` |
+| 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | best cubical field config, energy/temporal ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | Gated `db` reference stayed strong (`AUC 0.963, EER 0.095`); raw `db` without gate fell to `AUC 0.941, EER 0.127`; energy weighting and temporal transforms hurt (`AUC 0.750-0.874`) |
+| 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | low-band cubical field, homology ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | Low-band H1 carries most of the signal: H0 only `AUC 0.877, EER 0.193`; H1 only `AUC 0.956, EER 0.106`; H0+H1 `AUC 0.974, EER 0.075` |
+| 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | low-band cubical field, `C` and gate robustness | n/a | landscape (`layers=7`, `bins=120`) | SVM | varies | varies | Low-band result is stable across nearby classifier settings: `C=2` `AUC 0.972, EER 0.078`; `C=4` `AUC 0.974, EER 0.075`; `C=8` `AUC 0.975, EER 0.078`; gate off remained close at `AUC 0.974, EER 0.077` |
+| 2026-04-18/19 | train→dev held-out eval (`train n=1000`, full dev `n=24844`) | best cubical field vs low-band variants | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | n/a | varies | Full-dev check confirms the low-band gain: reference `AUC 0.958, EER 0.103`; keep low `AUC 0.966, EER 0.090`; low + lower mid `AUC 0.965, EER 0.093`; keep-low H1 only `AUC 0.965, EER 0.095` |
 
 ## Current Read
 
@@ -74,16 +80,17 @@ This file is the running record for benchmark setup, implementation changes that
   - Frame-energy gating (`~10-20%`) was the largest single gain.
   - Disabling grid normalization helped once gating/compression were tuned.
   - Slightly denser landscape vectorization (`layers=7`, `bins=120`) pushed CV below 10% EER.
-- Local reruns confirmed the same qualitative ablation ranking (H1 >> H0, gateing helps, `db` compression is critical), but absolute metrics were weaker than the previous best-seen run. This needs seed and environment variance checks before declaring a new stable best.
-- Best cubical-only bounded CV result so far: `AUC 0.963`, `EER 0.095` (`n=1000`, balanced train CV).
-- Held-out train→dev check (`train n=1000`, `dev n=5000 balanced subset`) remained strong: `AUC 0.959`, `EER 0.099`.
-- Homology ablation indicates H1 carries most of the discriminative power, but H0+H1 together remain better than H1-only on the current best config.
+- Frequency-band ablations moved the current read from "full mel field is best" to "low mel band carries most of the useful topology." Keeping only the low band improved bounded CV to `AUC 0.974`, `EER 0.075`; dropping the low band caused a large collapse.
+- Full-dev held-out evaluation (`train n=1000`, full dev `n=24844`) confirmed the low-band gain: keep-low `AUC 0.966`, `EER 0.090` vs full-field reference `AUC 0.958`, `EER 0.103`.
+- Homology ablation indicates H1 carries most of the discriminative power. H0+H1 remains best in CV, but low-band H1-only is close on full dev (`AUC 0.965`, `EER 0.095`).
+- Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
+- Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
 - Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
 
 ## Next Runs
 
-1. Add frequency-band masking ablation (low / mid / high mel bands) against the frozen cubical reference.
-2. Run held-out dev/eval checks for the strongest local ablation variants (gate `12/16`, normalization `zscore`) to verify whether CV gains transfer.
-3. Repeat train-CV ablation block with 2-3 train seeds to separate real gains from split variance.
-4. Keep classifier `C` sweeps as robustness/sensitivity checks, separate from the main ablation section.
-5. Keep Morse/VR/kNN as ablation and interpretability branches, but treat cubical best-field as the primary detector branch.
+1. Repeat the low-band CV and full-dev checks across 2-3 train seeds to separate real gains from split variance.
+2. Treat `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the new primary cubical candidate, while keeping `configs/experiments/cubical_mel_best_field_svm.yaml` as the full-field reference.
+3. Run a bounded ASVspoof 2019→2021 transfer check for the full-field and low-band candidates before attempting the full 2021 eval set.
+4. Add a small analysis pass over low-band mel ranges to connect the empirical band split to plausible speech/acoustic structure.
+5. Keep Morse/VR/kNN as ablation and interpretability branches, but treat cubical low-band as the primary detector branch until a multi-seed check says otherwise.

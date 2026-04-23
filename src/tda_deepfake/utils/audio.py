@@ -2,6 +2,11 @@
 
 import numpy as np
 import numpy.typing as npt
+import shutil
+import subprocess
+import tempfile
+import time
+import warnings
 from pathlib import Path
 from typing import Iterator
 
@@ -10,6 +15,18 @@ try:
     LIBROSA_AVAILABLE = True
 except ImportError:
     LIBROSA_AVAILABLE = False
+
+try:
+    import soundfile as sf
+    SOUNDFILE_AVAILABLE = True
+except ImportError:
+    SOUNDFILE_AVAILABLE = False
+
+try:
+    import imageio_ffmpeg
+    FFMPEG_AVAILABLE = True
+except ImportError:
+    FFMPEG_AVAILABLE = False
 
 from ..config import AudioConfig
 
@@ -43,13 +60,82 @@ def load_audio(
         ImportError: If librosa is not installed.
         FileNotFoundError: If the audio file does not exist.
     """
-    if not LIBROSA_AVAILABLE:
-        raise ImportError("librosa is required for audio loading. pip install librosa")
+    if not LIBROSA_AVAILABLE and not SOUNDFILE_AVAILABLE and not FFMPEG_AVAILABLE:
+        raise ImportError("librosa, soundfile, or imageio-ffmpeg is required for audio loading")
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Audio file not found: {path}")
-    audio, _ = librosa.load(path, sr=sample_rate, mono=mono)
+
+    if SOUNDFILE_AVAILABLE:
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                return _read_audio_soundfile(path, sample_rate=sample_rate, mono=mono)
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.25 * (attempt + 1))
+        try:
+            with tempfile.NamedTemporaryFile(suffix=path.suffix) as tmp:
+                shutil.copyfile(path, tmp.name)
+                return _read_audio_soundfile(Path(tmp.name), sample_rate=sample_rate, mono=mono)
+        except Exception as exc:
+            last_error = exc
+        if not LIBROSA_AVAILABLE:
+            if FFMPEG_AVAILABLE:
+                return _read_audio_ffmpeg(path, sample_rate=sample_rate, mono=mono)
+            raise last_error
+
+    if FFMPEG_AVAILABLE:
+        try:
+            return _read_audio_ffmpeg(path, sample_rate=sample_rate, mono=mono)
+        except Exception:
+            if not LIBROSA_AVAILABLE:
+                raise
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="PySoundFile failed. Trying audioread instead.")
+        warnings.filterwarnings("ignore", message=".*__audioread_load.*", category=FutureWarning)
+        audio, _ = librosa.load(path, sr=sample_rate, mono=mono)
     return audio
+
+
+def _read_audio_soundfile(
+    path: Path,
+    sample_rate: int,
+    mono: bool,
+) -> npt.NDArray[np.float32]:
+    audio, native_sr = sf.read(path, always_2d=False, dtype="float32")
+    if mono and audio.ndim > 1:
+        audio = np.mean(audio, axis=1, dtype=np.float32)
+    if native_sr != sample_rate:
+        if not LIBROSA_AVAILABLE:
+            raise ImportError("librosa is required to resample audio")
+        audio = librosa.resample(audio, orig_sr=native_sr, target_sr=sample_rate)
+    return np.asarray(audio, dtype=np.float32)
+
+
+def _read_audio_ffmpeg(
+    path: Path,
+    sample_rate: int,
+    mono: bool,
+) -> npt.NDArray[np.float32]:
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    command = [
+        ffmpeg,
+        "-v", "error",
+        "-nostdin",
+        "-i", str(path),
+        "-f", "f32le",
+        "-acodec", "pcm_f32le",
+        "-ar", str(sample_rate),
+    ]
+    if mono:
+        command.extend(["-ac", "1"])
+    command.append("-")
+    result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    audio = np.frombuffer(result.stdout, dtype=np.float32)
+    return audio.copy()
 
 
 def load_asvspoof_manifest(

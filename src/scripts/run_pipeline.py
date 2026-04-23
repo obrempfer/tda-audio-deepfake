@@ -63,11 +63,21 @@ def parse_args() -> argparse.Namespace:
     # Shared options
     parser.add_argument("--out-dir", type=Path, default=Path("data/results/default"),
                         help="Output directory for results")
-    parser.add_argument("--cache-dir", type=Path, default=None,
-                        help="Optional shared feature cache directory. "
-                             "If omitted, uses <out-dir>/feature_cache")
     parser.add_argument("--max-samples", type=int, default=None,
-                        help="Cap on number of samples (useful for quick smoke tests)")
+                        help="Legacy cap on train/CV samples (useful for quick smoke tests)")
+    parser.add_argument("--max-train-samples", type=int, default=None,
+                        help="Cap on train samples in train/eval mode. Overrides --max-samples.")
+    parser.add_argument("--max-eval-samples", type=int, default=None,
+                        help="Cap on eval samples in train/eval mode.")
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Feature cache directory for CV mode, or parent cache directory for "
+                             "train/eval mode. If omitted, uses <out-dir>/feature_cache.")
+    parser.add_argument("--train-cache-dir", type=Path, default=None,
+                        help="Feature cache directory for train split in train/eval mode.")
+    parser.add_argument("--eval-cache-dir", type=Path, default=None,
+                        help="Feature cache directory for eval split in train/eval mode.")
+    parser.add_argument("--load-model", type=Path, default=None,
+                        help="Load a saved model.pkl and skip train extraction/training in train/eval mode.")
     parser.add_argument("--method", default=None,
                         choices=["persistence_image", "landscape", "statistics"],
                         help="Vectorization method")
@@ -311,11 +321,13 @@ def _subsample_samples(
     """Return a reproducible subsample that preserves class balance when possible."""
     if max_samples is None or max_samples >= len(samples):
         return samples
+    if max_samples <= 0:
+        return []
 
     labels = np.array([label for _, label in samples], dtype=int)
     unique_labels, counts = np.unique(labels, return_counts=True)
 
-    if len(unique_labels) <= 1:
+    if len(unique_labels) <= 1 or max_samples < len(unique_labels):
         return samples[:max_samples]
 
     rng = np.random.default_rng(random_state)
@@ -377,45 +389,66 @@ def main() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     print(f"Using feature cache at {cache_dir}")
 
+    max_train_samples = args.max_train_samples
+    if max_train_samples is None:
+        max_train_samples = args.max_samples
+
     # ------------------------------------------------------------------ #
     # Mode B: train/eval                                                   #
     # ------------------------------------------------------------------ #
-    if args.train_protocol is not None:
-        if args.train_audio_dir is None or args.eval_protocol is None or args.eval_audio_dir is None:
+    if args.train_protocol is not None or args.load_model is not None:
+        if args.eval_protocol is None or args.eval_audio_dir is None:
             raise ValueError(
-                "--train-protocol requires --train-audio-dir, --eval-protocol, and --eval-audio-dir"
+                "train/eval mode requires --eval-protocol and --eval-audio-dir"
+            )
+        if args.load_model is None and (args.train_protocol is None or args.train_audio_dir is None):
+            raise ValueError(
+                "--train-protocol requires --train-audio-dir unless --load-model is provided"
             )
 
-        print(f"Loading train samples from {args.train_protocol}...")
-        train_samples = list(load_asvspoof_manifest(args.train_protocol, args.train_audio_dir))
-        train_samples = _subsample_samples(
-            train_samples, args.max_samples, ClassifierConfig.RANDOM_STATE
-        )
+        train_cache_dir = args.train_cache_dir or (cache_dir / "train")
+        eval_cache_dir = args.eval_cache_dir or (cache_dir / "eval")
 
-        print(f"Extracting features for {len(train_samples)} train samples...")
-        X_train, y_train = _extract_split(
-            train_samples, cache_dir / "train", method, n_bins, max_points
-        )
+        if args.load_model is None:
+            print(f"Loading train samples from {args.train_protocol}...")
+            train_samples = list(load_asvspoof_manifest(args.train_protocol, args.train_audio_dir))
+            train_samples = _subsample_samples(
+                train_samples, max_train_samples, ClassifierConfig.RANDOM_STATE
+            )
+
+            print(f"Extracting/loading features for {len(train_samples)} train samples...")
+            X_train, y_train = _extract_split(
+                train_samples, train_cache_dir, method, n_bins, max_points
+            )
+        else:
+            print(f"Loading saved model from {args.load_model}; skipping train extraction.")
+            X_train, y_train = None, None
 
         print(f"Loading eval samples from {args.eval_protocol}...")
         eval_samples = list(load_asvspoof_manifest(args.eval_protocol, args.eval_audio_dir))
+        eval_samples = _subsample_samples(
+            eval_samples, args.max_eval_samples, ClassifierConfig.RANDOM_STATE
+        )
 
-        print(f"Extracting features for {len(eval_samples)} eval samples...")
+        print(f"Extracting/loading features for {len(eval_samples)} eval samples...")
         X_eval, y_eval = _extract_split(
-            eval_samples, cache_dir / "eval", method, n_bins, max_points
+            eval_samples, eval_cache_dir, method, n_bins, max_points
         )
 
-        print("Training classifier...")
-        clf = Classifier(
-            model=model,
-            svm_kernel=ClassifierConfig.SVM_KERNEL,
-            svm_c=ClassifierConfig.SVM_C,
-            scale_features=ClassifierConfig.SCALE_FEATURES,
-            random_state=ClassifierConfig.RANDOM_STATE,
-        )
-        clf.fit(X_train, y_train)
-        clf.save(args.out_dir / "model.pkl")
-        print(f"Model saved to {args.out_dir / 'model.pkl'}")
+        if args.load_model is None:
+            print("Training classifier...")
+            clf = Classifier(
+                model=model,
+                svm_kernel=ClassifierConfig.SVM_KERNEL,
+                svm_c=ClassifierConfig.SVM_C,
+                scale_features=ClassifierConfig.SCALE_FEATURES,
+                random_state=ClassifierConfig.RANDOM_STATE,
+            )
+            clf.fit(X_train, y_train)
+            clf.save(args.out_dir / "model.pkl")
+            print(f"Model saved to {args.out_dir / 'model.pkl'}")
+        else:
+            clf = Classifier.load(args.load_model)
 
         print("Evaluating on eval set...")
         eval_results = clf.evaluate(X_eval, y_eval)
@@ -426,7 +459,7 @@ def main() -> None:
         metrics = {
             "auc": float(eval_results["auc"]),
             "eer": float(eval_results["eer"]),
-            "n_train": len(y_train),
+            "n_train": None if y_train is None else len(y_train),
             "n_eval": len(y_eval),
             "n_bonafide_eval": int(np.sum(y_eval == 0)),
             "n_spoof_eval": int(np.sum(y_eval == 1)),
@@ -435,6 +468,11 @@ def main() -> None:
                 "model": model,
                 "n_bins": n_bins,
                 "max_points": max_points,
+                "max_train_samples": max_train_samples,
+                "max_eval_samples": args.max_eval_samples,
+                "train_cache_dir": str(train_cache_dir),
+                "eval_cache_dir": str(eval_cache_dir),
+                "loaded_model": None if args.load_model is None else str(args.load_model),
             },
         }
         with open(args.out_dir / "eval_results.json", "w") as f:
@@ -456,7 +494,7 @@ def main() -> None:
     samples = list(load_asvspoof_manifest(args.protocol, args.audio_dir))
     samples = _subsample_samples(samples, args.max_samples, ClassifierConfig.RANDOM_STATE)
 
-    print(f"Extracting features for {len(samples)} samples...")
+    print(f"Extracting/loading features for {len(samples)} samples...")
     X, y = _extract_split(samples, cache_dir, method, n_bins, max_points)
 
     print("Running cross-validation...")
