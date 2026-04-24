@@ -154,13 +154,53 @@ def build_mel_spectrogram(
     max_frames: Optional[int] = SpectrogramConfig.MAX_FRAMES,
 ) -> npt.NDArray[np.float64]:
     """Build a mel-spectrogram grid for cubical persistent homology."""
+    grid = build_raw_mel_spectrogram(
+        audio,
+        sample_rate=sample_rate,
+        n_mels=n_mels,
+        power=power,
+        fmin=fmin,
+        fmax=fmax,
+    )
+    return postprocess_mel_spectrogram(
+        grid,
+        log_scale=log_scale,
+        compression=compression,
+        smoothing=smoothing,
+        smoothing_sigma=smoothing_sigma,
+        smoothing_axis=smoothing_axis,
+        band_mask_mode=band_mask_mode,
+        band_split_low=band_split_low,
+        band_split_high=band_split_high,
+        band_mask_fill=band_mask_fill,
+        temporal_field_mode=temporal_field_mode,
+        temporal_field_sigma=temporal_field_sigma,
+        energy_weighting_mode=energy_weighting_mode,
+        energy_weighting_gamma=energy_weighting_gamma,
+        energy_gate_percentile=energy_gate_percentile,
+        energy_gate_fill=energy_gate_fill,
+        normalize=normalize,
+        normalization_method=normalization_method,
+        max_frames=max_frames,
+    )
+
+
+def build_raw_mel_spectrogram(
+    audio: npt.NDArray[np.float32],
+    sample_rate: int = AudioConfig.SAMPLE_RATE,
+    n_mels: int = SpectrogramConfig.N_MELS,
+    power: float = SpectrogramConfig.POWER,
+    fmin: float = SpectrogramConfig.FMIN,
+    fmax: Optional[float] = SpectrogramConfig.FMAX,
+) -> npt.NDArray[np.float64]:
+    """Build the raw mel-spectrogram before any topology-specific transforms."""
     if not LIBROSA_AVAILABLE:
         raise ImportError("librosa is required for mel spectrogram extraction. pip install librosa")
 
     n_fft = int(sample_rate * AudioConfig.WINDOW_SIZE_MS / 1000)
     hop_length = int(sample_rate * AudioConfig.HOP_SIZE_MS / 1000)
 
-    grid = librosa.feature.melspectrogram(
+    return librosa.feature.melspectrogram(
         y=audio,
         sr=sample_rate,
         n_fft=n_fft,
@@ -171,6 +211,29 @@ def build_mel_spectrogram(
         fmax=fmax,
     ).astype(np.float64)
 
+
+def postprocess_mel_spectrogram(
+    grid: npt.NDArray[np.float64],
+    log_scale: bool = SpectrogramConfig.LOG_SCALE,
+    compression: str = SpectrogramConfig.COMPRESSION,
+    smoothing: str = SpectrogramConfig.SMOOTHING,
+    smoothing_sigma: float = SpectrogramConfig.SMOOTHING_SIGMA,
+    smoothing_axis: str = SpectrogramConfig.SMOOTHING_AXIS,
+    band_mask_mode: str = SpectrogramConfig.BAND_MASK_MODE,
+    band_split_low: float = SpectrogramConfig.BAND_SPLIT_LOW,
+    band_split_high: float = SpectrogramConfig.BAND_SPLIT_HIGH,
+    band_mask_fill: str = SpectrogramConfig.BAND_MASK_FILL,
+    temporal_field_mode: str = SpectrogramConfig.TEMPORAL_FIELD_MODE,
+    temporal_field_sigma: float = SpectrogramConfig.TEMPORAL_FIELD_SIGMA,
+    energy_weighting_mode: str = SpectrogramConfig.ENERGY_WEIGHTING_MODE,
+    energy_weighting_gamma: float = SpectrogramConfig.ENERGY_WEIGHTING_GAMMA,
+    energy_gate_percentile: Optional[float] = SpectrogramConfig.ENERGY_GATE_PERCENTILE,
+    energy_gate_fill: str = SpectrogramConfig.ENERGY_GATE_FILL,
+    normalize: bool = SpectrogramConfig.NORMALIZE,
+    normalization_method: str = SpectrogramConfig.NORMALIZATION_METHOD,
+    max_frames: Optional[int] = SpectrogramConfig.MAX_FRAMES,
+) -> npt.NDArray[np.float64]:
+    """Apply masking, compression, smoothing, and normalization to a mel grid."""
     grid = _apply_band_mask(
         grid,
         mode=band_mask_mode,

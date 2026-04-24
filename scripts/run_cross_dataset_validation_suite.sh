@@ -10,8 +10,14 @@ EVAL_AUDIO_DIR="${EVAL_AUDIO_DIR:-$ROOT_DIR/data/raw/ASVspoof2021_LA/ASVspoof202
 RESULTS_ROOT="${RESULTS_ROOT:-$ROOT_DIR/data/results}"
 RUNTIME_ROOT="${RUNTIME_ROOT:-/tmp/${USER}/tda_deepfake_runtime}"
 CACHE_ROOT="${CACHE_ROOT:-$RUNTIME_ROOT/feature_cache}"
+CACHE_NAMESPACE="${CACHE_NAMESPACE:-cross_dataset_2019_to_2021_shared}"
+SHARED_CACHE_DIR="${SHARED_CACHE_DIR:-$CACHE_ROOT/$CACHE_NAMESPACE}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
 MAX_EVAL_SAMPLES="${MAX_EVAL_SAMPLES:-1000}"
+PIPELINE_WORKERS="${PIPELINE_WORKERS:-40}"
+TRAIN_WORKERS="${TRAIN_WORKERS:-$PIPELINE_WORKERS}"
+EVAL_WORKERS="${EVAL_WORKERS:-$PIPELINE_WORKERS}"
+PROGRESS_EVERY="${PROGRESS_EVERY:-250}"
 
 if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
   PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
@@ -22,11 +28,17 @@ else
   exit 1
 fi
 
-mkdir -p "$RESULTS_ROOT/logs" "$CACHE_ROOT" "$RUNTIME_ROOT/mpl" "$RUNTIME_ROOT/pycache" "$RUNTIME_ROOT/xdg"
+mkdir -p "$RESULTS_ROOT/logs" "$CACHE_ROOT" "$SHARED_CACHE_DIR" "$RUNTIME_ROOT/mpl" "$RUNTIME_ROOT/pycache" "$RUNTIME_ROOT/xdg"
 export MPLCONFIGDIR="$RUNTIME_ROOT/mpl"
 export PYTHONPYCACHEPREFIX="$RUNTIME_ROOT/pycache"
 export XDG_CACHE_HOME="$RUNTIME_ROOT/xdg"
 export PYTHONPATH="$ROOT_DIR/src"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
+export BLIS_NUM_THREADS="${BLIS_NUM_THREADS:-1}"
 
 RUN_TAG="${RUN_TAG:-cross_dataset_2019_to_2021_$(date +%Y%m%d_%H%M%S)}"
 SUMMARY_LOG="$RESULTS_ROOT/logs/${RUN_TAG}_summary.log"
@@ -45,6 +57,9 @@ echo "Eval protocol: $EVAL_PROTOCOL" | tee -a "$SUMMARY_LOG"
 echo "Max train samples: $MAX_TRAIN_SAMPLES" | tee -a "$SUMMARY_LOG"
 echo "Max eval samples: $MAX_EVAL_SAMPLES" | tee -a "$SUMMARY_LOG"
 echo "Cache root: $CACHE_ROOT" | tee -a "$SUMMARY_LOG"
+echo "Shared cache dir: $SHARED_CACHE_DIR" | tee -a "$SUMMARY_LOG"
+echo "Train workers: $TRAIN_WORKERS" | tee -a "$SUMMARY_LOG"
+echo "Eval workers: $EVAL_WORKERS" | tee -a "$SUMMARY_LOG"
 
 fail_count=0
 
@@ -52,13 +67,14 @@ for item in "${RUNS[@]}"; do
   IFS="|" read -r name config_rel model_rel <<< "$item"
   config_path="$ROOT_DIR/$config_rel"
   out_dir="$RESULTS_ROOT/${RUN_TAG}_${name}"
-  cache_dir="$CACHE_ROOT/${RUN_TAG}_${name}"
+  cache_dir="$SHARED_CACHE_DIR"
   log_file="$RESULTS_ROOT/logs/${RUN_TAG}_${name}.log"
 
   echo "" | tee -a "$SUMMARY_LOG"
   echo "[$(date -Is)] START $name" | tee -a "$SUMMARY_LOG"
   echo "  config=$config_rel" | tee -a "$SUMMARY_LOG"
   echo "  out_dir=${out_dir#$ROOT_DIR/}" | tee -a "$SUMMARY_LOG"
+  echo "  cache_dir=${cache_dir#$ROOT_DIR/}" | tee -a "$SUMMARY_LOG"
 
   cmd=(
     "$PYTHON_BIN" -u "$ROOT_DIR/src/scripts/run_pipeline.py"
@@ -67,6 +83,9 @@ for item in "${RUNS[@]}"; do
     --eval-audio-dir "$EVAL_AUDIO_DIR"
     --out-dir "$out_dir"
     --cache-dir "$cache_dir"
+    --train-workers "$TRAIN_WORKERS"
+    --eval-workers "$EVAL_WORKERS"
+    --progress-every "$PROGRESS_EVERY"
   )
 
   if [[ -n "$MAX_EVAL_SAMPLES" ]]; then

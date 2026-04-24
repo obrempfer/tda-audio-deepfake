@@ -4,21 +4,58 @@ Uses the 'statistics' vectorization method so it runs with only
 numpy/ripser/scikit-learn installed (no persim or giotto-tda required).
 """
 
+import wave
+
 import numpy as np
 import pytest
 
-from scripts.run_pipeline import _feature_cache_key, _subsample_samples
-from tda_deepfake.config import FeatureConfig, PointCloudConfig, SpectrogramConfig, TopologyConfig, VectorizationConfig
-from tda_deepfake.features.extraction import extract_features, build_point_cloud, build_mel_spectrogram
+from scripts.run_pipeline import (
+    _diagram_cache_key,
+    _extract_split,
+    _feature_cache_key,
+    _resolve_worker_count,
+    _subsample_samples,
+    _vector_block_cache_key,
+)
+from tda_deepfake.config import (
+    FeatureConfig,
+    PointCloudConfig,
+    SpectrogramConfig,
+    TopologyConfig,
+    VectorizationConfig,
+    apply_runtime_config,
+    export_runtime_config,
+)
+from tda_deepfake.features.extraction import (
+    build_mel_spectrogram,
+    build_point_cloud,
+    build_raw_mel_spectrogram,
+    extract_features,
+    postprocess_mel_spectrogram,
+)
 from tda_deepfake.topology.persistent_homology import compute_persistence
 from tda_deepfake.topology.morse_smale import compute_morse_smale_signature
-from tda_deepfake.topology.vectorization import vectorize_diagrams
+from tda_deepfake.topology.vectorization import (
+    flatten_vector_blocks,
+    vectorize_diagram_blocks,
+    vectorize_diagrams,
+)
 from tda_deepfake.classification.classifier import Classifier
 
 
 def _synthetic_audio(duration_s: float = 1.0, sr: int = 16000, seed: int = 0) -> np.ndarray:
     rng = np.random.default_rng(seed)
     return rng.standard_normal(int(sr * duration_s)).astype(np.float32)
+
+
+def _write_wav(path, audio: np.ndarray, sr: int = 16000) -> None:
+    clipped = np.clip(audio, -1.0, 1.0)
+    pcm = (clipped * 32767.0).astype(np.int16)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sr)
+        wav_file.writeframes(pcm.tobytes())
 
 
 def test_full_pipeline_smoke():
@@ -84,6 +121,29 @@ def test_full_cubical_pipeline_smoke():
     assert "eer" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
     assert 0.0 <= metrics["eer"] <= 1.0
+
+
+def test_mel_staging_round_trip_matches_direct_builder():
+    audio = _synthetic_audio(seed=123)
+    direct = build_mel_spectrogram(
+        audio,
+        n_mels=24,
+        band_mask_mode="keep_low",
+        compression="log1p",
+        smoothing="gaussian",
+        smoothing_sigma=0.5,
+        max_frames=32,
+    )
+    raw = build_raw_mel_spectrogram(audio, n_mels=24)
+    staged = postprocess_mel_spectrogram(
+        raw,
+        band_mask_mode="keep_low",
+        compression="log1p",
+        smoothing="gaussian",
+        smoothing_sigma=0.5,
+        max_frames=32,
+    )
+    np.testing.assert_allclose(direct, staged)
 
 
 def test_full_knn_flag_pipeline_smoke():
@@ -161,6 +221,18 @@ def test_feature_vector_fixed_length():
     v1 = _vectorize(short_audio)
     v2 = _vectorize(long_audio)
     assert v1.shape == v2.shape, f"Expected equal lengths, got {v1.shape} vs {v2.shape}"
+
+
+def test_vector_block_round_trip_matches_flat_vectorization():
+    audio = _synthetic_audio(seed=7)
+    grid = build_mel_spectrogram(audio, n_mels=24, max_frames=32)
+    diagrams = compute_persistence(grid, complex_type="cubical", max_dim=1)
+
+    direct = vectorize_diagrams(diagrams, method="statistics")
+    blocks = vectorize_diagram_blocks(diagrams, method="statistics")
+    staged = flatten_vector_blocks(blocks)
+
+    np.testing.assert_allclose(direct, staged)
 
 
 def test_build_point_cloud_subsampling():
@@ -259,6 +331,86 @@ def test_feature_cache_key_changes_with_complex_type():
         TopologyConfig.COMPLEX = original_complex
 
     assert key_vr != key_cubical
+
+
+def test_runtime_config_snapshot_round_trip():
+    original = FeatureConfig.INCLUDE_F0
+    snapshot = export_runtime_config()
+    try:
+        FeatureConfig.INCLUDE_F0 = not original
+        apply_runtime_config(snapshot)
+        assert FeatureConfig.INCLUDE_F0 == original
+    finally:
+        FeatureConfig.INCLUDE_F0 = original
+
+
+def test_resolve_worker_count_auto_clamps_to_sample_count():
+    assert _resolve_worker_count(0, 3) == 3
+    assert _resolve_worker_count(8, 3) == 3
+    assert _resolve_worker_count(1, 3) == 1
+
+
+def test_extract_split_parallel_matches_serial(tmp_path):
+    samples = []
+    for i in range(4):
+        audio_path = tmp_path / f"sample_{i}.wav"
+        _write_wav(audio_path, _synthetic_audio(duration_s=0.1, seed=i))
+        samples.append((audio_path, i % 2))
+
+    X_serial, y_serial = _extract_split(
+        samples,
+        tmp_path / "cache_serial",
+        method="statistics",
+        n_bins=20,
+        max_points=50,
+        num_workers=1,
+        progress_every=10,
+    )
+    X_parallel, y_parallel = _extract_split(
+        samples,
+        tmp_path / "cache_parallel",
+        method="statistics",
+        n_bins=20,
+        max_points=50,
+        num_workers=2,
+        progress_every=10,
+    )
+
+    np.testing.assert_allclose(X_serial, X_parallel)
+    np.testing.assert_array_equal(y_serial, y_parallel)
+
+
+def test_diagram_cache_key_ignores_requested_homology_dim():
+    original_max_dim = TopologyConfig.MAX_HOMOLOGY_DIM
+    try:
+        TopologyConfig.MAX_HOMOLOGY_DIM = 0
+        key_h0 = _diagram_cache_key("processed-grid")
+
+        TopologyConfig.MAX_HOMOLOGY_DIM = 1
+        key_h1 = _diagram_cache_key("processed-grid")
+    finally:
+        TopologyConfig.MAX_HOMOLOGY_DIM = original_max_dim
+
+    assert key_h0 == key_h1
+
+
+def test_vector_block_cache_key_ignores_homology_weights():
+    original_weights = VectorizationConfig.HOMOLOGY_WEIGHTS
+    try:
+        VectorizationConfig.HOMOLOGY_WEIGHTS = None
+        unweighted_key = _vector_block_cache_key("diagram-key", method="statistics", n_bins=20)
+
+        VectorizationConfig.HOMOLOGY_WEIGHTS = [0.0, 1.0]
+        weighted_key = _vector_block_cache_key("diagram-key", method="statistics", n_bins=20)
+        final_weighted = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        VectorizationConfig.HOMOLOGY_WEIGHTS = None
+        final_unweighted = _feature_cache_key("statistics", n_bins=20, max_points=300)
+    finally:
+        VectorizationConfig.HOMOLOGY_WEIGHTS = original_weights
+
+    assert unweighted_key == weighted_key
+    assert final_unweighted != final_weighted
 
 
 def test_feature_cache_key_changes_with_knn_graph_parameters():

@@ -55,22 +55,47 @@ def vectorize_diagrams(
         ImportError: If the required library for the chosen method is unavailable.
         ValueError: If an unsupported method is specified.
     """
+    blocks = vectorize_diagram_blocks(diagrams, method=method, n_bins=n_bins, sigma=sigma)
+    return flatten_vector_blocks(blocks)
+
+
+def vectorize_diagram_blocks(
+    diagrams: list[npt.NDArray],
+    method: Literal["persistence_image", "landscape", "statistics"] = VectorizationConfig.METHOD,
+    n_bins: int = VectorizationConfig.PI_N_BINS,
+    sigma: float = VectorizationConfig.PI_SIGMA,
+) -> list[npt.NDArray]:
+    """Vectorize diagrams into one unweighted block per homology dimension."""
     if method == "persistence_image":
-        return _persistence_image_vector(diagrams, n_bins=n_bins, sigma=sigma)
-    elif method == "landscape":
-        return _landscape_vector(diagrams)
-    elif method == "statistics":
-        return _summary_statistics_vector(diagrams)
-    else:
-        raise ValueError(f"Unknown vectorization method: {method!r}")
+        return _persistence_image_blocks(diagrams, n_bins=n_bins, sigma=sigma)
+    if method == "landscape":
+        return _landscape_blocks(diagrams)
+    if method == "statistics":
+        return _summary_statistics_blocks(diagrams)
+    raise ValueError(f"Unknown vectorization method: {method!r}")
 
 
-def _persistence_image_vector(
+def flatten_vector_blocks(
+    blocks: list[npt.NDArray],
+    homology_weights: list[float] | None = VectorizationConfig.HOMOLOGY_WEIGHTS,
+) -> npt.NDArray:
+    """Concatenate one block per homology dimension after applying weights."""
+    if not blocks:
+        return np.zeros(0, dtype=np.float64)
+
+    weighted = []
+    for dim, block in enumerate(blocks):
+        weight = _homology_weight(dim, weights=homology_weights)
+        weighted.append(np.asarray(block, dtype=np.float64) * weight)
+    return np.concatenate(weighted)
+
+
+def _persistence_image_blocks(
     diagrams: list[npt.NDArray],
     n_bins: int,
     sigma: float,
-) -> npt.NDArray:
-    """Vectorize diagrams via persistence images."""
+) -> list[npt.NDArray]:
+    """Vectorize diagrams via persistence images, one block per dimension."""
     if not PERSIM_AVAILABLE and not GIOTTO_AVAILABLE:
         raise ImportError(
             "persim or giotto-tda is required for persistence images. "
@@ -78,12 +103,11 @@ def _persistence_image_vector(
         )
 
     if GIOTTO_AVAILABLE:
-        return _giotto_persistence_image_vector(diagrams, n_bins=n_bins, sigma=sigma)
+        return _giotto_persistence_image_blocks(diagrams, n_bins=n_bins, sigma=sigma)
 
     vectors = []
     pim = PersImage(spread=sigma, pixels=(n_bins, n_bins), verbose=False)
-    for dim, dgm in enumerate(diagrams):
-        weight = _homology_weight(dim)
+    for dgm in diagrams:
         finite = dgm[~np.isinf(dgm[:, 1])]
         if len(finite) == 0:
             vectors.append(np.zeros(n_bins * n_bins))
@@ -93,19 +117,18 @@ def _persistence_image_vector(
             if not hasattr(collections, "Iterable"):
                 collections.Iterable = collections.abc.Iterable
             img = pim.transform(finite)
-            vectors.append(img.flatten() * weight)
-    return np.concatenate(vectors)
+            vectors.append(img.flatten())
+    return vectors
 
 
-def _giotto_persistence_image_vector(
+def _giotto_persistence_image_blocks(
     diagrams: list[npt.NDArray],
     n_bins: int,
     sigma: float,
-) -> npt.NDArray:
+) -> list[npt.NDArray]:
     """Vectorize diagrams with giotto-tda, keeping one block per homology dimension."""
     vectors = []
-    for dim, dgm in enumerate(diagrams):
-        weight = _homology_weight(dim)
+    for dgm in diagrams:
         finite = dgm[~np.isinf(dgm[:, 1])]
         if len(finite) == 0:
             vectors.append(np.zeros(n_bins * n_bins))
@@ -114,19 +137,18 @@ def _giotto_persistence_image_vector(
         batch = np.column_stack([finite, np.zeros(len(finite))])[np.newaxis]
         pi = PersistenceImage(sigma=sigma, n_bins=n_bins)
         img = pi.fit_transform(batch)
-        vectors.append(img.flatten() * weight)
-    return np.concatenate(vectors)
+        vectors.append(img.flatten())
+    return vectors
 
 
-def _landscape_vector(diagrams: list[npt.NDArray]) -> npt.NDArray:
-    """Vectorize diagrams via persistence landscapes (giotto-tda)."""
+def _landscape_blocks(diagrams: list[npt.NDArray]) -> list[npt.NDArray]:
+    """Vectorize diagrams via persistence landscapes, one block per dimension."""
     if not GIOTTO_AVAILABLE:
         raise ImportError("giotto-tda is required for persistence landscapes. pip install giotto-tda")
     # giotto-tda expects a batch dimension; wrap and unwrap
     cfg = VectorizationConfig
     vectors = []
-    for dim, dgm in enumerate(diagrams):
-        weight = _homology_weight(dim)
+    for dgm in diagrams:
         finite = dgm[~np.isinf(dgm[:, 1])]
         if len(finite) == 0:
             vectors.append(np.zeros(cfg.LANDSCAPE_N_LAYERS * cfg.LANDSCAPE_N_BINS))
@@ -138,22 +160,21 @@ def _landscape_vector(diagrams: list[npt.NDArray]) -> npt.NDArray:
             # giotto expects shape (n_samples, n_points, 3) with homology_dimension col
             batch = np.column_stack([finite, np.zeros(len(finite))])[np.newaxis]
             result = pl.fit_transform(batch)
-            vectors.append(result.flatten() * weight)
-    return np.concatenate(vectors)
+            vectors.append(result.flatten())
+    return vectors
 
 
-def _summary_statistics_vector(diagrams: list[npt.NDArray]) -> npt.NDArray:
+def _summary_statistics_blocks(diagrams: list[npt.NDArray]) -> list[npt.NDArray]:
     """Compute summary statistics per homological dimension.
 
     Returns: [total_persistence_H0, max_persistence_H0, entropy_H0,
                total_persistence_H1, max_persistence_H1, entropy_H1, ...]
     """
     stats = []
-    for dim, dgm in enumerate(diagrams):
-        weight = _homology_weight(dim)
+    for dgm in diagrams:
         finite = dgm[~np.isinf(dgm[:, 1])]
         if len(finite) == 0:
-            stats.extend([0.0, 0.0, 0.0])
+            stats.append(np.array([0.0, 0.0, 0.0], dtype=np.float64))
             continue
         persistences = finite[:, 1] - finite[:, 0]
         total = float(np.sum(persistences))
@@ -161,13 +182,12 @@ def _summary_statistics_vector(diagrams: list[npt.NDArray]) -> npt.NDArray:
         # Normalized entropy
         p = persistences / (total + 1e-12)
         entropy = float(-np.sum(p * np.log(p + 1e-12)))
-        stats.extend([total * weight, maximum * weight, entropy * weight])
-    return np.array(stats)
+        stats.append(np.array([total, maximum, entropy], dtype=np.float64))
+    return stats
 
 
-def _homology_weight(dim: int) -> float:
+def _homology_weight(dim: int, weights: list[float] | None = VectorizationConfig.HOMOLOGY_WEIGHTS) -> float:
     """Return scaling weight for a homology dimension."""
-    weights = VectorizationConfig.HOMOLOGY_WEIGHTS
     if not weights:
         return 1.0
     if dim >= len(weights):

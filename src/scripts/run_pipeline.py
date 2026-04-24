@@ -23,12 +23,27 @@ Re-runs with the same --method and --n-bins skip extraction entirely.
 import argparse
 import hashlib
 import json
+import os
+import tempfile
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 import numpy as np
 from pathlib import Path
+from typing import Callable
 
 from tda_deepfake.utils import load_audio, load_asvspoof_manifest
-from tda_deepfake.features import extract_features, build_point_cloud, build_mel_spectrogram
-from tda_deepfake.topology import compute_persistence, compute_morse_smale_signature, vectorize_diagrams
+from tda_deepfake.features import (
+    build_point_cloud,
+    build_raw_mel_spectrogram,
+    extract_features,
+    postprocess_mel_spectrogram,
+)
+from tda_deepfake.topology import (
+    compute_morse_smale_signature,
+    compute_persistence,
+    flatten_vector_blocks,
+    vectorize_diagram_blocks,
+)
 from tda_deepfake.classification import Classifier
 from tda_deepfake.config import (
     AudioConfig,
@@ -39,6 +54,8 @@ from tda_deepfake.config import (
     SpectrogramConfig,
     TopologyConfig,
     VectorizationConfig,
+    apply_runtime_config,
+    export_runtime_config,
     load_config_from_yaml,
 )
 
@@ -87,11 +104,523 @@ def parse_args() -> argparse.Namespace:
                         help="Persistence image grid resolution (n_bins x n_bins)")
     parser.add_argument("--max-points", type=int, default=None,
                         help="Max point cloud size per utterance (subsampled uniformly)")
+    parser.add_argument("--num-workers", type=int, default=1,
+                        help="Feature-extraction worker processes. Use 0 to use all visible CPUs.")
+    parser.add_argument("--train-workers", type=int, default=None,
+                        help="Override --num-workers for train extraction in train/eval mode.")
+    parser.add_argument("--eval-workers", type=int, default=None,
+                        help="Override --num-workers for eval extraction in train/eval mode.")
+    parser.add_argument("--progress-every", type=int, default=100,
+                        help="Print extraction progress every N completed samples.")
     parser.add_argument("--config", type=Path, default=None,
                         help="Optional YAML config file to override defaults")
     parser.add_argument("--ablation", action="store_true",
                         help="Run dimensional ablation on flagged samples (not yet wired)")
     return parser.parse_args()
+
+
+_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
+_THREADPOOL_LIMITS = None
+
+
+def _limit_worker_threads() -> None:
+    """Avoid nested BLAS/OpenMP oversubscription inside worker processes."""
+    global _THREADPOOL_LIMITS
+
+    for key in _THREAD_ENV_VARS:
+        os.environ[key] = "1"
+
+    try:
+        from threadpoolctl import threadpool_limits
+
+        _THREADPOOL_LIMITS = threadpool_limits(limits=1)
+        _THREADPOOL_LIMITS.__enter__()
+    except Exception:
+        _THREADPOOL_LIMITS = None
+
+
+_STAGE_CACHE_ROOT = "_stage_cache"
+
+
+def _stable_digest(signature: dict[str, object]) -> str:
+    """Hash a config signature into a short stable cache suffix."""
+    encoded = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha1(encoded).hexdigest()[:12]
+
+
+def _stage_cache_file(
+    cache_dir: Path,
+    stage_name: str,
+    audio_path: Path,
+    cache_key: str,
+    suffix: str = ".npy",
+) -> Path:
+    """Return a stage-cache path nested under the split cache directory."""
+    stage_dir = cache_dir / _STAGE_CACHE_ROOT / stage_name
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    return stage_dir / f"{audio_path.stem}_{cache_key}{suffix}"
+
+
+def _atomic_save_array(path: Path, array: np.ndarray) -> None:
+    """Atomically save one ndarray to avoid partially-written cache files."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        np.save(tmp_path, array)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_save_bundle(path: Path, arrays: list[np.ndarray], computed_max_dim: int) -> None:
+    """Atomically save a variable-length list of arrays plus bundle metadata."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, np.ndarray] = {
+        "meta_computed_max_dim": np.asarray(computed_max_dim, dtype=np.int64),
+    }
+    for idx, array in enumerate(arrays):
+        payload[f"arr_{idx}"] = np.asarray(array, dtype=np.float64)
+
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        np.savez_compressed(tmp_path, **payload)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _load_cached_array(path: Path) -> np.ndarray | None:
+    """Load one cached ndarray, dropping corrupt files eagerly."""
+    if not path.exists():
+        return None
+    try:
+        return np.load(path, allow_pickle=False)
+    except Exception:
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _load_cached_bundle(path: Path) -> tuple[list[np.ndarray], int] | None:
+    """Load a cached list-of-arrays bundle, or None if absent/corrupt."""
+    if not path.exists():
+        return None
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            computed_max_dim = int(data["meta_computed_max_dim"][()])
+            arrays = []
+            idx = 0
+            while f"arr_{idx}" in data.files:
+                arrays.append(np.asarray(data[f"arr_{idx}"], dtype=np.float64))
+                idx += 1
+    except Exception:
+        path.unlink(missing_ok=True)
+        return None
+
+    return arrays, computed_max_dim
+
+
+def _raw_mel_cache_key() -> str:
+    """Cache key for the raw mel grid before masking/compression."""
+    return _stable_digest(
+        {
+            "stage": "raw_mel",
+            "audio": {
+                "sample_rate": AudioConfig.SAMPLE_RATE,
+                "window_size_ms": AudioConfig.WINDOW_SIZE_MS,
+                "hop_size_ms": AudioConfig.HOP_SIZE_MS,
+            },
+            "spectrogram": {
+                "kind": SpectrogramConfig.KIND,
+                "n_mels": SpectrogramConfig.N_MELS,
+                "power": SpectrogramConfig.POWER,
+                "fmin": SpectrogramConfig.FMIN,
+                "fmax": SpectrogramConfig.FMAX,
+            },
+        }
+    )
+
+
+def _processed_grid_cache_key(raw_mel_key: str) -> str:
+    """Cache key for the fully processed cubical grid."""
+    return _stable_digest(
+        {
+            "stage": "processed_grid",
+            "raw_mel_key": raw_mel_key,
+            "spectrogram": {
+                "log_scale": SpectrogramConfig.LOG_SCALE,
+                "compression": SpectrogramConfig.COMPRESSION,
+                "smoothing": SpectrogramConfig.SMOOTHING,
+                "smoothing_sigma": SpectrogramConfig.SMOOTHING_SIGMA,
+                "smoothing_axis": SpectrogramConfig.SMOOTHING_AXIS,
+                "band_mask_mode": SpectrogramConfig.BAND_MASK_MODE,
+                "band_split_low": SpectrogramConfig.BAND_SPLIT_LOW,
+                "band_split_high": SpectrogramConfig.BAND_SPLIT_HIGH,
+                "band_mask_fill": SpectrogramConfig.BAND_MASK_FILL,
+                "temporal_field_mode": SpectrogramConfig.TEMPORAL_FIELD_MODE,
+                "temporal_field_sigma": SpectrogramConfig.TEMPORAL_FIELD_SIGMA,
+                "energy_weighting_mode": SpectrogramConfig.ENERGY_WEIGHTING_MODE,
+                "energy_weighting_gamma": SpectrogramConfig.ENERGY_WEIGHTING_GAMMA,
+                "energy_gate_percentile": SpectrogramConfig.ENERGY_GATE_PERCENTILE,
+                "energy_gate_fill": SpectrogramConfig.ENERGY_GATE_FILL,
+                "normalize": SpectrogramConfig.NORMALIZE,
+                "normalization_method": SpectrogramConfig.NORMALIZATION_METHOD,
+                "max_frames": SpectrogramConfig.MAX_FRAMES,
+            },
+        }
+    )
+
+
+def _feature_matrix_cache_key() -> str:
+    """Cache key for the point-cloud feature matrix before subsampling."""
+    return _stable_digest(
+        {
+            "stage": "feature_matrix",
+            "audio": {
+                "sample_rate": AudioConfig.SAMPLE_RATE,
+                "window_size_ms": AudioConfig.WINDOW_SIZE_MS,
+                "hop_size_ms": AudioConfig.HOP_SIZE_MS,
+                "n_mfcc": AudioConfig.N_MFCC,
+                "include_delta": AudioConfig.INCLUDE_DELTA,
+                "include_delta2": AudioConfig.INCLUDE_DELTA2,
+            },
+            "feature": {
+                "include_f0": FeatureConfig.INCLUDE_F0,
+                "include_jitter_shimmer": FeatureConfig.INCLUDE_JITTER_SHIMMER,
+                "include_formants": FeatureConfig.INCLUDE_FORMANTS,
+                "include_spectral_flux": FeatureConfig.INCLUDE_SPECTRAL_FLUX,
+                "n_formants": FeatureConfig.N_FORMANTS,
+            },
+        }
+    )
+
+
+def _point_cloud_cache_key(feature_matrix_key: str, max_points: int) -> str:
+    """Cache key for the normalized/projected point cloud."""
+    return _stable_digest(
+        {
+            "stage": "point_cloud",
+            "feature_matrix_key": feature_matrix_key,
+            "point_cloud": {
+                "max_points": max_points,
+                "normalize": PointCloudConfig.NORMALIZE,
+                "normalization_method": PointCloudConfig.NORMALIZATION_METHOD,
+                "projection": PointCloudConfig.PROJECTION,
+                "projection_dim": PointCloudConfig.PROJECTION_DIM,
+                "projection_random_state": PointCloudConfig.PROJECTION_RANDOM_STATE,
+            },
+        }
+    )
+
+
+def _diagram_cache_key(topological_object_key: str) -> str:
+    """Cache key for persistence diagrams, excluding the requested max dimension."""
+    return _stable_digest(
+        {
+            "stage": "diagrams",
+            "topological_object_key": topological_object_key,
+            "topology": {
+                "complex": TopologyConfig.COMPLEX,
+                "distance_metric": TopologyConfig.DISTANCE_METRIC,
+                "cubical_filtration": TopologyConfig.CUBICAL_FILTRATION,
+                "knn_k": TopologyConfig.KNN_K,
+                "knn_graph_mode": TopologyConfig.KNN_GRAPH_MODE,
+                "max_edge_length": TopologyConfig.MAX_EDGE_LENGTH,
+                "coeff": TopologyConfig.COEFF,
+            },
+        }
+    )
+
+
+def _vector_block_cache_key(diagram_key: str, method: str, n_bins: int) -> str:
+    """Cache key for per-dimension vector blocks, excluding homology weights."""
+    return _stable_digest(
+        {
+            "stage": "vector_blocks",
+            "diagram_key": diagram_key,
+            "vectorization": {
+                "method": method,
+                "n_bins": n_bins,
+                "sigma": VectorizationConfig.PI_SIGMA,
+                "landscape_n_layers": VectorizationConfig.LANDSCAPE_N_LAYERS,
+                "landscape_n_bins": VectorizationConfig.LANDSCAPE_N_BINS,
+            },
+        }
+    )
+
+
+def _morse_smale_signature_cache_key(processed_grid_key: str) -> str:
+    """Cache key for topology-inspired Morse-Smale signatures."""
+    return _stable_digest(
+        {
+            "stage": "morse_smale_signature",
+            "processed_grid_key": processed_grid_key,
+            "complex": TopologyConfig.COMPLEX,
+            "morse_smale": {
+                "implementation": MorseSmaleConfig.IMPLEMENTATION,
+                "graph_max_neighbors": MorseSmaleConfig.GRAPH_MAX_NEIGHBORS,
+                "graph_relaxed": MorseSmaleConfig.GRAPH_RELAXED,
+                "normalization": MorseSmaleConfig.NORMALIZATION,
+                "simplification": MorseSmaleConfig.SIMPLIFICATION,
+                "neighborhood_size": MorseSmaleConfig.NEIGHBORHOOD_SIZE,
+                "top_k_basins": MorseSmaleConfig.TOP_K_BASINS,
+                "include_extrema_values": MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
+                "top_k_extrema": MorseSmaleConfig.TOP_K_EXTREMA,
+            },
+        }
+    )
+
+
+def _load_or_compute_stage_array(
+    cache_file: Path,
+    compute_fn: Callable[[], np.ndarray],
+) -> np.ndarray:
+    """Read a stage cache file or compute and atomically materialize it."""
+    cached = _load_cached_array(cache_file)
+    if cached is not None:
+        return cached
+
+    array = np.asarray(compute_fn(), dtype=np.float64)
+    _atomic_save_array(cache_file, array)
+    return array
+
+
+def _load_or_compute_dimensional_bundle(
+    cache_file: Path,
+    requested_max_dim: int,
+    compute_fn: Callable[[int], list[np.ndarray]],
+) -> list[np.ndarray]:
+    """Load a staged bundle if it covers the requested dimensions, else recompute."""
+    cached = _load_cached_bundle(cache_file)
+    if cached is not None:
+        arrays, computed_max_dim = cached
+        if computed_max_dim >= requested_max_dim and len(arrays) >= requested_max_dim + 1:
+            return arrays[: requested_max_dim + 1]
+
+    arrays = [np.asarray(array, dtype=np.float64) for array in compute_fn(requested_max_dim)]
+    _atomic_save_bundle(cache_file, arrays, computed_max_dim=requested_max_dim)
+    return arrays
+
+
+def _compute_feature_vector(audio_path: Path, cache_dir: Path, method: str, n_bins: int, max_points: int) -> np.ndarray:
+    """Compute one utterance feature vector, reusing staged intermediate caches."""
+    audio: np.ndarray | None = None
+
+    def _audio() -> np.ndarray:
+        nonlocal audio
+        if audio is None:
+            audio = load_audio(audio_path, sample_rate=AudioConfig.SAMPLE_RATE)
+        return audio
+
+    if TopologyConfig.COMPLEX in {"cubical", "morse_smale", "morse_smale_approx"}:
+        raw_mel_key = _raw_mel_cache_key()
+        raw_mel_file = _stage_cache_file(cache_dir, "raw_mel", audio_path, raw_mel_key)
+        raw_grid = _load_or_compute_stage_array(
+            raw_mel_file,
+            lambda: build_raw_mel_spectrogram(
+                _audio(),
+                sample_rate=AudioConfig.SAMPLE_RATE,
+                n_mels=SpectrogramConfig.N_MELS,
+                power=SpectrogramConfig.POWER,
+                fmin=SpectrogramConfig.FMIN,
+                fmax=SpectrogramConfig.FMAX,
+            ),
+        )
+
+        processed_grid_key = _processed_grid_cache_key(raw_mel_key)
+        processed_grid_file = _stage_cache_file(cache_dir, "processed_grid", audio_path, processed_grid_key)
+        grid = _load_or_compute_stage_array(
+            processed_grid_file,
+            lambda: postprocess_mel_spectrogram(
+                raw_grid,
+                log_scale=SpectrogramConfig.LOG_SCALE,
+                compression=SpectrogramConfig.COMPRESSION,
+                smoothing=SpectrogramConfig.SMOOTHING,
+                smoothing_sigma=SpectrogramConfig.SMOOTHING_SIGMA,
+                smoothing_axis=SpectrogramConfig.SMOOTHING_AXIS,
+                band_mask_mode=SpectrogramConfig.BAND_MASK_MODE,
+                band_split_low=SpectrogramConfig.BAND_SPLIT_LOW,
+                band_split_high=SpectrogramConfig.BAND_SPLIT_HIGH,
+                band_mask_fill=SpectrogramConfig.BAND_MASK_FILL,
+                temporal_field_mode=SpectrogramConfig.TEMPORAL_FIELD_MODE,
+                temporal_field_sigma=SpectrogramConfig.TEMPORAL_FIELD_SIGMA,
+                energy_weighting_mode=SpectrogramConfig.ENERGY_WEIGHTING_MODE,
+                energy_weighting_gamma=SpectrogramConfig.ENERGY_WEIGHTING_GAMMA,
+                energy_gate_percentile=SpectrogramConfig.ENERGY_GATE_PERCENTILE,
+                energy_gate_fill=SpectrogramConfig.ENERGY_GATE_FILL,
+                normalize=SpectrogramConfig.NORMALIZE,
+                normalization_method=SpectrogramConfig.NORMALIZATION_METHOD,
+                max_frames=SpectrogramConfig.MAX_FRAMES,
+            ),
+        )
+
+        if TopologyConfig.COMPLEX in {"morse_smale", "morse_smale_approx"}:
+            signature_key = _morse_smale_signature_cache_key(processed_grid_key)
+            signature_file = _stage_cache_file(cache_dir, "morse_smale_signature", audio_path, signature_key)
+            return _load_or_compute_stage_array(
+                signature_file,
+                lambda: compute_morse_smale_signature(
+                    grid,
+                    implementation="approx"
+                    if TopologyConfig.COMPLEX == "morse_smale_approx"
+                    else MorseSmaleConfig.IMPLEMENTATION,
+                    graph_max_neighbors=MorseSmaleConfig.GRAPH_MAX_NEIGHBORS,
+                    graph_relaxed=MorseSmaleConfig.GRAPH_RELAXED,
+                    normalization=MorseSmaleConfig.NORMALIZATION,
+                    simplification=MorseSmaleConfig.SIMPLIFICATION,
+                    neighborhood_size=MorseSmaleConfig.NEIGHBORHOOD_SIZE,
+                    top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
+                    include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
+                    top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
+                ),
+            )
+
+        topology_object = grid
+        topology_object_key = processed_grid_key
+    else:
+        feature_matrix_key = _feature_matrix_cache_key()
+        feature_matrix_file = _stage_cache_file(cache_dir, "feature_matrix", audio_path, feature_matrix_key)
+        feature_matrix = _load_or_compute_stage_array(
+            feature_matrix_file,
+            lambda: extract_features(
+                _audio(),
+                sample_rate=AudioConfig.SAMPLE_RATE,
+                include_delta=AudioConfig.INCLUDE_DELTA,
+                include_delta2=AudioConfig.INCLUDE_DELTA2,
+                include_f0=FeatureConfig.INCLUDE_F0,
+                include_jitter_shimmer=FeatureConfig.INCLUDE_JITTER_SHIMMER,
+                include_formants=FeatureConfig.INCLUDE_FORMANTS,
+                include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
+            ),
+        )
+
+        point_cloud_key = _point_cloud_cache_key(feature_matrix_key, max_points)
+        point_cloud_file = _stage_cache_file(cache_dir, "point_cloud", audio_path, point_cloud_key)
+        topology_object = _load_or_compute_stage_array(
+            point_cloud_file,
+            lambda: build_point_cloud(
+                feature_matrix,
+                max_points=max_points,
+                normalize=PointCloudConfig.NORMALIZE,
+                normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
+                projection=PointCloudConfig.PROJECTION,
+                projection_dim=PointCloudConfig.PROJECTION_DIM,
+                projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
+            ),
+        )
+        topology_object_key = point_cloud_key
+
+    diagram_key = _diagram_cache_key(topology_object_key)
+    diagram_file = _stage_cache_file(cache_dir, "diagrams", audio_path, diagram_key, suffix=".npz")
+    diagrams = _load_or_compute_dimensional_bundle(
+        diagram_file,
+        requested_max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
+        compute_fn=lambda max_dim: compute_persistence(
+            topology_object,
+            complex_type=TopologyConfig.COMPLEX,
+            max_dim=max_dim,
+            metric=TopologyConfig.DISTANCE_METRIC,
+            cubical_filtration=TopologyConfig.CUBICAL_FILTRATION,
+            knn_k=TopologyConfig.KNN_K,
+            knn_graph_mode=TopologyConfig.KNN_GRAPH_MODE,
+            max_edge_length=TopologyConfig.MAX_EDGE_LENGTH,
+            coeff=TopologyConfig.COEFF,
+        ),
+    )
+
+    block_key = _vector_block_cache_key(diagram_key, method=method, n_bins=n_bins)
+    block_file = _stage_cache_file(cache_dir, "vector_blocks", audio_path, block_key, suffix=".npz")
+    blocks = _load_or_compute_dimensional_bundle(
+        block_file,
+        requested_max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
+        compute_fn=lambda _: vectorize_diagram_blocks(
+            diagrams,
+            method=method,
+            n_bins=n_bins,
+            sigma=VectorizationConfig.PI_SIGMA,
+        ),
+    )
+    return flatten_vector_blocks(blocks, homology_weights=VectorizationConfig.HOMOLOGY_WEIGHTS)
+
+
+def _load_or_compute_feature_vector(
+    audio_path: Path,
+    cache_dir: Path,
+    cache_key: str,
+    method: str,
+    n_bins: int,
+    max_points: int,
+) -> np.ndarray:
+    """Load a cached vector if present, otherwise compute it via staged caches."""
+    cache_file = cache_dir / f"{audio_path.stem}_{cache_key}.npy"
+    cached = _load_cached_array(cache_file)
+    if cached is not None:
+        return cached
+
+    vec = _compute_feature_vector(
+        audio_path,
+        cache_dir=cache_dir,
+        method=method,
+        n_bins=n_bins,
+        max_points=max_points,
+    )
+    _atomic_save_array(cache_file, vec)
+    return vec
+
+
+def _init_extraction_worker(config_snapshot: dict[str, dict[str, object]]) -> None:
+    """Reapply runtime config in child processes before extraction begins."""
+    apply_runtime_config(config_snapshot)
+    _limit_worker_threads()
+
+
+def _extract_one_sample(
+    task: tuple[int, str, int, str, str, str, int, int]
+) -> tuple[int, np.ndarray, int]:
+    """Process one sample task in a worker process."""
+    idx, audio_path_str, label, cache_dir_str, cache_key, method, n_bins, max_points = task
+    audio_path = Path(audio_path_str)
+    cache_dir = Path(cache_dir_str)
+    try:
+        vec = _load_or_compute_feature_vector(
+            audio_path,
+            cache_dir=cache_dir,
+            cache_key=cache_key,
+            method=method,
+            n_bins=n_bins,
+            max_points=max_points,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Failed to extract features for {audio_path}") from exc
+    return idx, vec, label
+
+
+def _resolve_worker_count(requested_workers: int | None, n_samples: int) -> int:
+    """Normalize worker count; 0 means all visible CPUs."""
+    if n_samples <= 0:
+        return 1
+    if requested_workers is None:
+        requested_workers = 1
+    if requested_workers < 0:
+        raise ValueError("Worker count must be >= 0")
+    if requested_workers == 0:
+        requested_workers = os.cpu_count() or 1
+    return max(1, min(requested_workers, n_samples))
+
+
+def _parallel_chunksize(n_samples: int, worker_count: int) -> int:
+    """Choose a coarse chunk size to reduce executor overhead."""
+    if worker_count <= 1:
+        return 1
+    return max(1, min(64, n_samples // (worker_count * 8)))
 
 
 def _extract_split(
@@ -100,133 +629,61 @@ def _extract_split(
     method: str,
     n_bins: int,
     max_points: int,
+    num_workers: int = 1,
+    progress_every: int = 100,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Extract (or load from cache) feature vectors for a list of samples.
-
-    Args:
-        samples: List of (audio_path, label) pairs.
-        cache_dir: Directory for .npy cache files.
-        method: Vectorization method passed to vectorize_diagrams().
-        n_bins: Grid resolution for persistence images.
-        max_points: Maximum point cloud size (subsampled if exceeded).
-
-    Returns:
-        (X, y) numpy arrays.
-    """
+    """Extract (or load from cache) feature vectors for a list of samples."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    X_list, y_list = [], []
+    total = len(samples)
+    cache_key = _feature_cache_key(method, n_bins, max_points)
+    worker_count = _resolve_worker_count(num_workers, total)
 
-    for i, (audio_path, label) in enumerate(samples):
-        if i % 100 == 0:
-            print(f"  [{i}/{len(samples)}] {audio_path.name}")
+    if total == 0:
+        return np.zeros((0, 0), dtype=np.float64), np.array([], dtype=int)
 
-        cache_file = cache_dir / f"{audio_path.stem}_{_feature_cache_key(method, n_bins, max_points)}.npy"
-        if cache_file.exists():
-            vec = np.load(cache_file)
-        else:
-            audio = load_audio(audio_path, sample_rate=AudioConfig.SAMPLE_RATE)
-            if TopologyConfig.COMPLEX in {"cubical", "morse_smale", "morse_smale_approx"}:
-                grid = build_mel_spectrogram(
-                    audio,
-                    sample_rate=AudioConfig.SAMPLE_RATE,
-                    n_mels=SpectrogramConfig.N_MELS,
-                    power=SpectrogramConfig.POWER,
-                    fmin=SpectrogramConfig.FMIN,
-                    fmax=SpectrogramConfig.FMAX,
-                    log_scale=SpectrogramConfig.LOG_SCALE,
-                    compression=SpectrogramConfig.COMPRESSION,
-                    smoothing=SpectrogramConfig.SMOOTHING,
-                    smoothing_sigma=SpectrogramConfig.SMOOTHING_SIGMA,
-                    smoothing_axis=SpectrogramConfig.SMOOTHING_AXIS,
-                    band_mask_mode=SpectrogramConfig.BAND_MASK_MODE,
-                    band_split_low=SpectrogramConfig.BAND_SPLIT_LOW,
-                    band_split_high=SpectrogramConfig.BAND_SPLIT_HIGH,
-                    band_mask_fill=SpectrogramConfig.BAND_MASK_FILL,
-                    temporal_field_mode=SpectrogramConfig.TEMPORAL_FIELD_MODE,
-                    temporal_field_sigma=SpectrogramConfig.TEMPORAL_FIELD_SIGMA,
-                    energy_weighting_mode=SpectrogramConfig.ENERGY_WEIGHTING_MODE,
-                    energy_weighting_gamma=SpectrogramConfig.ENERGY_WEIGHTING_GAMMA,
-                    energy_gate_percentile=SpectrogramConfig.ENERGY_GATE_PERCENTILE,
-                    energy_gate_fill=SpectrogramConfig.ENERGY_GATE_FILL,
-                    normalize=SpectrogramConfig.NORMALIZE,
-                    normalization_method=SpectrogramConfig.NORMALIZATION_METHOD,
-                    max_frames=SpectrogramConfig.MAX_FRAMES,
-                )
-                if TopologyConfig.COMPLEX == "morse_smale_approx":
-                    vec = compute_morse_smale_signature(
-                        grid,
-                        implementation="approx",
-                        neighborhood_size=MorseSmaleConfig.NEIGHBORHOOD_SIZE,
-                        top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
-                        include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
-                        top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
-                    )
-                    np.save(cache_file, vec)
-                    X_list.append(vec)
-                    y_list.append(label)
-                    continue
-                if TopologyConfig.COMPLEX == "morse_smale":
-                    vec = compute_morse_smale_signature(
-                        grid,
-                        implementation=MorseSmaleConfig.IMPLEMENTATION,
-                        graph_max_neighbors=MorseSmaleConfig.GRAPH_MAX_NEIGHBORS,
-                        graph_relaxed=MorseSmaleConfig.GRAPH_RELAXED,
-                        normalization=MorseSmaleConfig.NORMALIZATION,
-                        simplification=MorseSmaleConfig.SIMPLIFICATION,
-                        neighborhood_size=MorseSmaleConfig.NEIGHBORHOOD_SIZE,
-                        top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
-                        include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
-                        top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
-                    )
-                    np.save(cache_file, vec)
-                    X_list.append(vec)
-                    y_list.append(label)
-                    continue
-                topological_object = grid
-            else:
-                features = extract_features(
-                    audio,
-                    sample_rate=AudioConfig.SAMPLE_RATE,
-                    include_delta=AudioConfig.INCLUDE_DELTA,
-                    include_delta2=AudioConfig.INCLUDE_DELTA2,
-                    include_f0=FeatureConfig.INCLUDE_F0,
-                    include_jitter_shimmer=FeatureConfig.INCLUDE_JITTER_SHIMMER,
-                    include_formants=FeatureConfig.INCLUDE_FORMANTS,
-                    include_spectral_flux=FeatureConfig.INCLUDE_SPECTRAL_FLUX,
-                )
-                topological_object = build_point_cloud(
-                    features,
-                    max_points=max_points,
-                    normalize=PointCloudConfig.NORMALIZE,
-                    normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
-                    projection=PointCloudConfig.PROJECTION,
-                    projection_dim=PointCloudConfig.PROJECTION_DIM,
-                    projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
-                )
-
-            diagrams = compute_persistence(
-                topological_object,
-                complex_type=TopologyConfig.COMPLEX,
-                max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
-                metric=TopologyConfig.DISTANCE_METRIC,
-                cubical_filtration=TopologyConfig.CUBICAL_FILTRATION,
-                knn_k=TopologyConfig.KNN_K,
-                knn_graph_mode=TopologyConfig.KNN_GRAPH_MODE,
-                max_edge_length=TopologyConfig.MAX_EDGE_LENGTH,
-                coeff=TopologyConfig.COEFF,
-            )
-            vec = vectorize_diagrams(
-                diagrams,
+    if worker_count == 1:
+        X_list, y_list = [], []
+        for i, (audio_path, label) in enumerate(samples):
+            if progress_every > 0 and i % progress_every == 0:
+                print(f"  [{i}/{total}] {audio_path.name}")
+            vec = _load_or_compute_feature_vector(
+                audio_path,
+                cache_dir=cache_dir,
+                cache_key=cache_key,
                 method=method,
                 n_bins=n_bins,
-                sigma=VectorizationConfig.PI_SIGMA,
+                max_points=max_points,
             )
-            np.save(cache_file, vec)
+            X_list.append(vec)
+            y_list.append(label)
+        return np.stack(X_list), np.array(y_list)
 
-        X_list.append(vec)
-        y_list.append(label)
+    print(f"Using {worker_count} worker processes for extraction")
+    tasks = [
+        (i, str(audio_path), int(label), str(cache_dir), cache_key, method, n_bins, max_points)
+        for i, (audio_path, label) in enumerate(samples)
+    ]
+    vectors: list[np.ndarray | None] = [None] * total
+    labels = np.empty(total, dtype=int)
+    chunksize = _parallel_chunksize(total, worker_count)
+    config_snapshot = export_runtime_config()
 
-    return np.stack(X_list), np.array(y_list)
+    with ProcessPoolExecutor(
+        max_workers=worker_count,
+        mp_context=get_context("spawn"),
+        initializer=_init_extraction_worker,
+        initargs=(config_snapshot,),
+    ) as executor:
+        for done, (idx, vec, label) in enumerate(
+            executor.map(_extract_one_sample, tasks, chunksize=chunksize),
+            start=1,
+        ):
+            vectors[idx] = vec
+            labels[idx] = label
+            if progress_every > 0 and (done % progress_every == 0 or done == total):
+                print(f"  [{done}/{total}] completed")
+
+    return np.stack(vectors), labels
 
 
 def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
@@ -384,6 +841,8 @@ def main() -> None:
     model = args.model or ClassifierConfig.MODEL
     n_bins = args.n_bins or VectorizationConfig.PI_N_BINS
     max_points = args.max_points or 300
+    train_workers = args.train_workers if args.train_workers is not None else args.num_workers
+    eval_workers = args.eval_workers if args.eval_workers is not None else args.num_workers
 
     cache_dir = args.cache_dir or (args.out_dir / "feature_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -418,7 +877,13 @@ def main() -> None:
 
             print(f"Extracting/loading features for {len(train_samples)} train samples...")
             X_train, y_train = _extract_split(
-                train_samples, train_cache_dir, method, n_bins, max_points
+                train_samples,
+                train_cache_dir,
+                method,
+                n_bins,
+                max_points,
+                num_workers=train_workers,
+                progress_every=args.progress_every,
             )
         else:
             print(f"Loading saved model from {args.load_model}; skipping train extraction.")
@@ -432,7 +897,13 @@ def main() -> None:
 
         print(f"Extracting/loading features for {len(eval_samples)} eval samples...")
         X_eval, y_eval = _extract_split(
-            eval_samples, eval_cache_dir, method, n_bins, max_points
+            eval_samples,
+            eval_cache_dir,
+            method,
+            n_bins,
+            max_points,
+            num_workers=eval_workers,
+            progress_every=args.progress_every,
         )
 
         if args.load_model is None:
@@ -495,7 +966,15 @@ def main() -> None:
     samples = _subsample_samples(samples, args.max_samples, ClassifierConfig.RANDOM_STATE)
 
     print(f"Extracting/loading features for {len(samples)} samples...")
-    X, y = _extract_split(samples, cache_dir, method, n_bins, max_points)
+    X, y = _extract_split(
+        samples,
+        cache_dir,
+        method,
+        n_bins,
+        max_points,
+        num_workers=args.num_workers,
+        progress_every=args.progress_every,
+    )
 
     print("Running cross-validation...")
     clf = Classifier(

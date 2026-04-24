@@ -236,6 +236,42 @@ class AblationConfig:
 
 
 # Runtime configuration helpers
+_KEY_MAP = {
+    "audio": AudioConfig,
+    "feature": FeatureConfig,
+    "point_cloud": PointCloudConfig,
+    "spectrogram": SpectrogramConfig,
+    "morse_smale": MorseSmaleConfig,
+    "topology": TopologyConfig,
+    "vectorization": VectorizationConfig,
+    "classifier": ClassifierConfig,
+    "ablation": AblationConfig,
+}
+
+
+def export_runtime_config() -> dict[str, dict[str, object]]:
+    """Return a serializable snapshot of all runtime config classes."""
+    snapshot: dict[str, dict[str, object]] = {}
+    for section, cls in _KEY_MAP.items():
+        values = {}
+        for name, value in vars(cls).items():
+            if name.startswith("_") or callable(value):
+                continue
+            values[name.lower()] = value
+        snapshot[section] = values
+    return snapshot
+
+
+def apply_runtime_config(snapshot: dict[str, dict[str, object]]) -> None:
+    """Apply a config snapshot produced by export_runtime_config()."""
+    for section, values in snapshot.items():
+        cls = _KEY_MAP.get(section)
+        if cls is None:
+            continue
+        for key, value in values.items():
+            attr = key.upper()
+            if hasattr(cls, attr):
+                setattr(cls, attr, value)
 
 def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = None) -> None:
     """Update AudioConfig at runtime.
@@ -267,17 +303,6 @@ def load_config_from_yaml(yaml_path: str) -> None:
         topology:
           max_homology_dim: 1
     """
-    _KEY_MAP = {
-        "audio": AudioConfig,
-        "feature": FeatureConfig,
-        "point_cloud": PointCloudConfig,
-        "spectrogram": SpectrogramConfig,
-        "morse_smale": MorseSmaleConfig,
-        "topology": TopologyConfig,
-        "vectorization": VectorizationConfig,
-        "classifier": ClassifierConfig,
-        "ablation": AblationConfig,
-    }
     with open(yaml_path, "r") as f:
         cfg = yaml.safe_load(f)
 

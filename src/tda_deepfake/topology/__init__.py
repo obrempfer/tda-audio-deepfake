@@ -8,6 +8,12 @@ signature on scalar fields.
 
 from .persistent_homology import compute_persistence
 from .morse_smale import compute_morse_smale_signature
-from .vectorization import vectorize_diagrams
+from .vectorization import flatten_vector_blocks, vectorize_diagram_blocks, vectorize_diagrams
 
-__all__ = ["compute_persistence", "compute_morse_smale_signature", "vectorize_diagrams"]
+__all__ = [
+    "compute_persistence",
+    "compute_morse_smale_signature",
+    "vectorize_diagrams",
+    "vectorize_diagram_blocks",
+    "flatten_vector_blocks",
+]
