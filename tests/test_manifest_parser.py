@@ -49,3 +49,16 @@ def test_manifest_resolves_suffixed_utterance_tokens(tmp_path: Path):
     path, label = samples[0]
     assert path.name == "LA_E_5013670.flac"
     assert label == 0
+
+
+def test_manifest_parses_asvspoof2021_df_trial_metadata_line(tmp_path: Path):
+    protocol = tmp_path / "df_trial_metadata.txt"
+    audio_dir = tmp_path / "audio"
+    _touch(audio_dir / "DF_E_2000011.flac")
+    protocol.write_text("DF_0001 DF_E_2000011 codec tx A09 spoof notrim eval\n")
+
+    samples = list(load_asvspoof_manifest(protocol, audio_dir))
+    assert len(samples) == 1
+    path, label = samples[0]
+    assert path.name == "DF_E_2000011.flac"
+    assert label == 1
