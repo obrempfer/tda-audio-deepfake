@@ -6,10 +6,12 @@ This file is the running record for benchmark setup, implementation changes that
 
 - Dataset: ASVspoof 2019 Logical Access (LA)
 - Canonical local dataset root: `data/raw/ASVspoof2019_LA/`
+- Transfer/eval dataset root: `data/raw/ASVspoof2021_LA/`
 - Derived balanced-train protocol:
   `data/raw/ASVspoof2019_LA/derived/ASVspoof2019.LA.cm.train.all_bonafide_balanced.seed42.txt`
 - Balanced protocol construction:
   all `2580` bonafide train utterances + `2580` spoof train utterances sampled with seed `42`
+- Recent DF transfer smoke tests were run on `bg16` from the official ASVspoof 2021 DF keys plus the `ASVspoof2021_DF_eval_part00.tar.gz` audio archive, materialized into balanced `/tmp` subsets because the lab home filesystem hit quota during full extraction.
 
 ## Implementation Notes That Affect Results
 
@@ -23,6 +25,9 @@ This file is the running record for benchmark setup, implementation changes that
 - `2026-04-17`: added `configs/experiments/cubical_mel_best_field_svm.yaml` to capture the current best cubical setup in one reproducible config.
 - `2026-04-17`: added optional homology-block weighting (`vectorization.homology_weights`) and a classifier scaler toggle (`classifier.scale_features`) to support H0/H1 ablation experiments.
 - `2026-04-18`: added frequency-band masking configs around the best cubical field setup, including low/mid/high keep/drop variants and finer low-band splits. These runs test whether the detector is using broad spectrogram structure or a localized frequency region.
+- `2026-04-24`: parallelized per-utterance feature extraction with explicit `train/eval` worker controls and BLAS/OpenMP thread caps, so large eval and transfer runs can use the lab CPU nodes efficiently.
+- `2026-04-24`: refactored cache reuse so related cubical configs can share intermediate mel-grid / topology / vectorization stages instead of recomputing the full pipeline for every nearby variant.
+- `2026-04-25`: added reproducible experiment tooling for ASVspoof 2021 DF transfer smoke tests and internal ASVspoof 2021 LA train/dev/test splits.
 
 ## Results
 
@@ -71,6 +76,61 @@ This file is the running record for benchmark setup, implementation changes that
 | 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | low-band cubical field, `C` and gate robustness | n/a | landscape (`layers=7`, `bins=120`) | SVM | varies | varies | Low-band result is stable across nearby classifier settings: `C=2` `AUC 0.972, EER 0.078`; `C=4` `AUC 0.974, EER 0.075`; `C=8` `AUC 0.975, EER 0.078`; gate off remained close at `AUC 0.974, EER 0.077` |
 | 2026-04-18/19 | train→dev held-out eval (`train n=1000`, full dev `n=24844`) | best cubical field vs low-band variants | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | n/a | varies | Full-dev check confirms the low-band gain: reference `AUC 0.958, EER 0.103`; keep low `AUC 0.966, EER 0.090`; low + lower mid `AUC 0.965, EER 0.093`; keep-low H1 only `AUC 0.965, EER 0.095` |
 
+### Cross-Dataset 2019 LA → 2021 LA Full Eval
+
+These runs use the 2019 balanced-train cubical family and evaluate on the full 2021 LA eval set (`n=181566`).
+
+| Date | Train / Eval | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-23/24 | 2019 LA train (`n=1000`) → 2021 LA full eval | full reference | 0.8268 | 0.2277 | Full-field transfer anchor |
+| 2026-04-24 | 2019 LA train (`n=1000`) → 2021 LA full eval | best field | 0.8135 | 0.2417 | Stronger in-domain than transfer; weakest of the final transfer block |
+| 2026-04-24 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low | 0.8298 | 0.2203 | Best full-transfer AUC among the main three-way low-band family |
+| 2026-04-24 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low H1 | 0.8293 | 0.2116 | Best full-transfer EER among the main three-way low-band family |
+| 2026-04-24 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low H0 | 0.7409 | 0.3122 | Large collapse relative to H1 / H0+H1 |
+
+### Cross-Dataset 2019 LA → 2021 LA Follow-Ups
+
+These follow-up runs reuse the same full 2021 LA eval set (`n=181566`) and probe small gate / `C` changes around the low-band winners.
+
+| Date | Train / Eval | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low + gate off | 0.8219 | 0.2307 | Worse than the default low-band gate |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low + gate10 | 0.8298 | 0.2203 | Same as the main keep-low transfer reference |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low + gate12 | 0.8329 | 0.2164 | Best follow-up AUC on 2021 LA transfer |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low H1 + `C=2` | 0.8316 | 0.2100 | Best follow-up EER on 2021 LA transfer |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low H1 + `C=4` | 0.8293 | 0.2116 | Same as the main H1 transfer reference |
+| 2026-04-25 | 2019 LA train (`n=1000`) → 2021 LA full eval | keep low H1 + `C=8` | 0.8262 | 0.2156 | Mildly worse than `C=2/4` |
+
+### ASVspoof 2021 DF Part 1 Transfer Smoke Tests
+
+These are not official benchmark numbers. They use the 2019-trained saved models unchanged and evaluate on balanced subsets carved from the DF `part00` archive plus the official DF keys.
+
+| Date | Eval subset | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-25 | DF part 1 balanced smoke subset (`n=1000`) | full reference | 0.7647 | 0.2960 | Pipeline ran cleanly on DF data |
+| 2026-04-25 | DF part 1 balanced smoke subset (`n=1000`) | keep low | 0.7745 | 0.3060 | Best smoke AUC, but noisy at this scale |
+| 2026-04-25 | DF part 1 balanced smoke subset (`n=1000`) | keep low H1 | 0.7657 | 0.2990 | Similar to the full-field anchor |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | full reference | 0.7777 | 0.2844 | Larger exact-transfer comparison subset |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low | 0.7907 | 0.2748 | Strongest DF transfer branch in this first pass |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low H1 | 0.7824 | 0.2798 | Retains signal, but does not beat keep-low here |
+
+### ASVspoof 2021 LA Internal Split Topology Sweep
+
+This is a research-only internal split, not an official challenge protocol. The split was built from the 2021 LA `trial_metadata.txt` rows with stratification over label + attack family and yielded `train=98783`, `dev=32931`, `test=32926` rows before bounded subsampling. The sweep itself used `max_train_samples=20000` and `max_eval_samples=10000` on the train/dev split.
+
+| Date | Internal 2021 LA run | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | full reference | 0.9440 | 0.1222 | Strong internal 2021 LA baseline |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | keep low | 0.9536 | 0.1096 | Best internal-split EER (tied with gate10) |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | keep low H1 | 0.9442 | 0.1229 | H1-only is not the winner in-domain |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | keep low H0 | 0.8802 | 0.1927 | Large collapse relative to keep-low / H1 |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | drop low | 0.9079 | 0.1744 | Strong evidence that the low band still matters in 2021 LA |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | drop mid | 0.9280 | 0.1436 | Mid band removal hurts, but less than dropping low |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | drop high | 0.9469 | 0.1257 | High band appears least important among the three broad regions |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | gate off | 0.9591 | 0.1117 | Best internal-split AUC |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | gate10 | 0.9536 | 0.1096 | Same as keep-low; best EER |
+| 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | gate12 | 0.9525 | 0.1108 | Very close to gate10 |
+
 ## Current Read
 
 - TDA-derived features contain strong signal for this task, and the cubical branch now performs at a competitive level on the current benchmark setup.
@@ -83,14 +143,18 @@ This file is the running record for benchmark setup, implementation changes that
 - Frequency-band ablations moved the current read from "full mel field is best" to "low mel band carries most of the useful topology." Keeping only the low band improved bounded CV to `AUC 0.974`, `EER 0.075`; dropping the low band caused a large collapse.
 - Full-dev held-out evaluation (`train n=1000`, full dev `n=24844`) confirmed the low-band gain: keep-low `AUC 0.966`, `EER 0.090` vs full-field reference `AUC 0.958`, `EER 0.103`.
 - Homology ablation indicates H1 carries most of the discriminative power. H0+H1 remains best in CV, but low-band H1-only is close on full dev (`AUC 0.965`, `EER 0.095`).
+- Full 2019 LA → 2021 LA transfer is materially weaker than the in-domain 2019 dev checks, but the low-band story survives. On the full 2021 LA eval set, keep-low gave the best AUC among the main transfer configs (`0.8298`), while keep-low H1 gave the best EER (`0.2116`).
+- The 2021 LA transfer follow-ups suggest only modest gains from small local retuning: gate12 lifted transfer AUC to `0.8329`, and keep-low H1 with `C=2` reduced transfer EER to `0.2100`.
+- The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), keep-low was the strongest branch (`AUC 0.7907`, `EER 0.2748`), which is nontrivial signal but clearly weaker than the 2021 LA transfer numbers.
+- The internal 2021 LA train/dev sweep says the low band still matters in-domain, but the exact winner shifts relative to the 2019-centered story: keep-low / gate10 gave the best EER (`0.1096`), gate-off gave the best AUC (`0.9591`), H1-only no longer wins, and H0-only remains much weaker.
 - Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
 - Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
 - Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
 
 ## Next Runs
 
-1. Repeat the low-band CV and full-dev checks across 2-3 train seeds to separate real gains from split variance.
-2. Treat `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the new primary cubical candidate, while keeping `configs/experiments/cubical_mel_best_field_svm.yaml` as the full-field reference.
-3. Run a bounded ASVspoof 2019→2021 transfer check for the full-field and low-band candidates before attempting the full 2021 eval set.
-4. Add a small analysis pass over low-band mel ranges to connect the empirical band split to plausible speech/acoustic structure.
-5. Keep Morse/VR/kNN as ablation and interpretability branches, but treat cubical low-band as the primary detector branch until a multi-seed check says otherwise.
+1. Run the small `C=2/4/8` robustness block around the internal 2021 LA winners (`keep_low/gate10` and possibly `gate_off`) before freezing the in-domain read.
+2. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
+3. Expand DF transfer beyond `part00`, or at least to a larger multi-part balanced slice, so the DF conclusions are not bottlenecked by one archive shard.
+4. Repeat the strongest transfer/internal checks across 2-3 train seeds to separate real gains from split variance.
+5. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary cubical branch for transfer, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant.
