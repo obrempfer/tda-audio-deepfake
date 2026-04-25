@@ -421,10 +421,6 @@ def load_sample_entries(
             f"{len(entries)} metadata rows vs {len(samples)} resolved samples"
         )
 
-    if limit is not None:
-        entries = entries[:limit]
-        samples = samples[:limit]
-
     out = []
     for meta, (audio_path, label) in zip(entries, samples):
         parts = meta.raw_line.split()
@@ -443,7 +439,54 @@ def load_sample_entries(
                 raw_line=meta.raw_line,
             )
         )
-    return out
+    if limit is None:
+        return out
+    return balanced_cap_entries(out, limit=limit, random_state=ClassifierConfig.RANDOM_STATE)
+
+
+def balanced_cap_entries(
+    entries: list[SampleEntry],
+    *,
+    limit: int,
+    random_state: int,
+) -> list[SampleEntry]:
+    if limit >= len(entries):
+        return entries
+    if limit <= 0:
+        return []
+
+    labels = np.array([entry.label for entry in entries], dtype=int)
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    if len(unique_labels) <= 1 or limit < len(unique_labels):
+        return entries[:limit]
+
+    rng = np.random.default_rng(random_state)
+    class_indices = {label: rng.permutation(np.flatnonzero(labels == label)) for label in unique_labels}
+    target_counts = {
+        label: max(1, int(np.floor(limit * count / len(entries))))
+        for label, count in zip(unique_labels, counts)
+    }
+
+    assigned = sum(target_counts.values())
+    while assigned > limit:
+        for label in sorted(target_counts, key=target_counts.get, reverse=True):
+            if assigned == limit:
+                break
+            if target_counts[label] > 1:
+                target_counts[label] -= 1
+                assigned -= 1
+
+    while assigned < limit:
+        for label in sorted(target_counts, key=target_counts.get):
+            if assigned == limit:
+                break
+            if target_counts[label] < len(class_indices[label]):
+                target_counts[label] += 1
+                assigned += 1
+
+    selected = np.concatenate([class_indices[label][: target_counts[label]] for label in unique_labels])
+    rng.shuffle(selected)
+    return [entries[idx] for idx in selected.tolist()]
 
 
 def select_cases(
