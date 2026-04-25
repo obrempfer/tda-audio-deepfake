@@ -114,6 +114,19 @@ These are not official benchmark numbers. They use the 2019-trained saved models
 | 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low | 0.7907 | 0.2748 | Strongest DF transfer branch in this first pass |
 | 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low H1 | 0.7824 | 0.2798 | Retains signal, but does not beat keep-low here |
 
+### ASVspoof 2021 DF Part 1 Follow-Ups
+
+These follow-ups reuse the balanced DF `part00` comparison subset (`n=5000`) and probe the same gate / `C` neighborhood that mattered for the 2021 LA transfer block.
+
+| Date | Eval subset | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate off | 0.7984 | 0.2658 | Clear DF winner among the gate variants |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate10 | 0.7907 | 0.2748 | Same as the original keep-low DF comparison run |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate12 | 0.7920 | 0.2764 | Slightly better AUC than gate10, but still behind gate-off |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate off + `C=2` | 0.7977 | 0.2664 | Nearly identical to `C=4` |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate off + `C=4` | 0.7984 | 0.2658 | Best DF follow-up result |
+| 2026-04-25 | DF part 1 balanced comparison subset (`n=5000`) | keep low + gate off + `C=8` | 0.7973 | 0.2670 | Essentially flat relative to `C=2/4` |
+
 ### ASVspoof 2021 LA Internal Split Topology Sweep
 
 This is a research-only internal split, not an official challenge protocol. The split was built from the 2021 LA `trial_metadata.txt` rows with stratification over label + attack family and yielded `train=98783`, `dev=32931`, `test=32926` rows before bounded subsampling. The sweep itself used `max_train_samples=20000` and `max_eval_samples=10000` on the train/dev split.
@@ -131,6 +144,17 @@ This is a research-only internal split, not an official challenge protocol. The 
 | 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | gate10 | 0.9536 | 0.1096 | Same as keep-low; best EER |
 | 2026-04-25 | internal train/dev split (`train max=20000`, `dev max=10000`) | gate12 | 0.9525 | 0.1108 | Very close to gate10 |
 
+### Multi-Dataset Comparison
+
+This table lines up the strongest directly comparable cubical-family anchors across the four main study settings.
+
+| Setting | Train / Eval | Full-field reference | Best low-band / gate variant | Best H1-only variant | Read |
+| --- | --- | --- | --- | --- | --- |
+| 2019 LA in-domain held-out | 2019 LA train (`n=1000`) → full dev (`n=24844`) | `AUC 0.9576`, `EER 0.1025` | keep low: `AUC 0.9663`, `EER 0.0896` | keep low H1: `AUC 0.9649`, `EER 0.0949` | Low band dominates in-domain; H1 is strong, but H0+H1 remains best |
+| 2021 LA transfer | 2019 LA train (`n=1000`) → 2021 LA full eval (`n=181566`) | `AUC 0.8268`, `EER 0.2277` | keep low + gate12: `AUC 0.8329`, `EER 0.2164` | keep low H1 + `C=2`: `AUC 0.8316`, `EER 0.2100` | Transfer is weaker, but the low-band family still survives the domain shift |
+| 2021 LA internal in-domain | internal 2021 LA train/dev (`train max=20000`, `dev max=10000`) | `AUC 0.9440`, `EER 0.1222` | gate off: `AUC 0.9591`, `EER 0.1117`; keep low / gate10 best `EER 0.1096` | keep low H1: `AUC 0.9442`, `EER 0.1229` | Low band still matters, but H1-only is not the winner in-domain |
+| 2021 DF bounded transfer | 2019 LA train (`n=1000`) → DF part 1 balanced subset (`n=5000`) | `AUC 0.7777`, `EER 0.2844` | keep low + gate off + `C=4`: `AUC 0.7984`, `EER 0.2658` | keep low H1: `AUC 0.7824`, `EER 0.2798` | DF retains nontrivial signal, but it is clearly weaker than either LA setting |
+
 ## Current Read
 
 - TDA-derived features contain strong signal for this task, and the cubical branch now performs at a competitive level on the current benchmark setup.
@@ -145,16 +169,17 @@ This is a research-only internal split, not an official challenge protocol. The 
 - Homology ablation indicates H1 carries most of the discriminative power. H0+H1 remains best in CV, but low-band H1-only is close on full dev (`AUC 0.965`, `EER 0.095`).
 - Full 2019 LA → 2021 LA transfer is materially weaker than the in-domain 2019 dev checks, but the low-band story survives. On the full 2021 LA eval set, keep-low gave the best AUC among the main transfer configs (`0.8298`), while keep-low H1 gave the best EER (`0.2116`).
 - The 2021 LA transfer follow-ups suggest only modest gains from small local retuning: gate12 lifted transfer AUC to `0.8329`, and keep-low H1 with `C=2` reduced transfer EER to `0.2100`.
-- The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), keep-low was the strongest branch (`AUC 0.7907`, `EER 0.2748`), which is nontrivial signal but clearly weaker than the 2021 LA transfer numbers.
+- The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), low-band transfer remained the strongest family, and the follow-up sweep moved the winner to gate-off (`AUC 0.7984`, `EER 0.2658`). The tiny `C=2/4/8` check was effectively flat, so further DF tuning is not a priority.
 - The internal 2021 LA train/dev sweep says the low band still matters in-domain, but the exact winner shifts relative to the 2019-centered story: keep-low / gate10 gave the best EER (`0.1096`), gate-off gave the best AUC (`0.9591`), H1-only no longer wins, and H0-only remains much weaker.
+- Across all four settings, the broad family conclusion still holds: low-band cubical structure is the most reliable motif, but the exact best gate / homology balance depends on domain. 2019 LA favors low-band strongly, 2021 LA transfer still benefits from low-band/H1 tweaks, 2021 LA in-domain prefers low-band with full H0+H1, and DF transfer prefers low-band with gate-off.
 - Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
 - Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
 - Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
 
 ## Next Runs
 
-1. Run the small `C=2/4/8` robustness block around the internal 2021 LA winners (`keep_low/gate10` and possibly `gate_off`) before freezing the in-domain read.
-2. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
+1. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
+2. Build the small sample-level explanation mini-demo: one 2019 LA fake, one 2021 LA fake, one bona fide sample, and optionally one failure case scored under the main field variants.
 3. Expand DF transfer beyond `part00`, or at least to a larger multi-part balanced slice, so the DF conclusions are not bottlenecked by one archive shard.
 4. Repeat the strongest transfer/internal checks across 2-3 train seeds to separate real gains from split variance.
-5. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary cubical branch for transfer, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant.
+5. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary transfer branch family, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant and the best bounded DF variant.
