@@ -1,0 +1,264 @@
+{
+  "cases": [
+    {
+      "case_key": "case_2019_fake",
+      "display_name": "2019 LA fake",
+      "family_key": "holdout2019",
+      "figure": "/tmp/obrempfer/tda_results/sample_explanation_demo_bg16_20260425/figures/case_2019_fake.png",
+      "sample": {
+        "attack": "A01",
+        "audio_path": "/home/obrempfer/Git/obrempfer/tda-audio-deepfake/data/raw/ASVspoof2019_LA/ASVspoof2019_LA_dev/flac/LA_D_7771514.flac",
+        "dataset": "2019_LA",
+        "label": 1,
+        "raw_line": "LA_0070 LA_D_7771514 - A01 spoof",
+        "split": "dev",
+        "utt_id": "LA_D_7771514"
+      },
+      "scores": {
+        "drop_low": {
+          "decision_margin": 1.3013170985285192,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9162413092710341,
+          "true_label_support": 0.9162413092710341,
+          "variant": "drop_low"
+        },
+        "gate_off": {
+          "decision_margin": 1.287477403835231,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9889981837674857,
+          "true_label_support": 0.9889981837674857,
+          "variant": "keep_low gate_off"
+        },
+        "keep_low": {
+          "decision_margin": 2.8270795671843967,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999999953648248,
+          "true_label_support": 0.9999999953648248,
+          "variant": "keep_low (gate10)"
+        },
+        "keep_low_h0": {
+          "decision_margin": 1.0068340224616346,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.8941361528879906,
+          "true_label_support": 0.8941361528879906,
+          "variant": "keep_low_h0"
+        },
+        "keep_low_h1": {
+          "decision_margin": 2.613239836232537,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999969146035103,
+          "true_label_support": 0.9999969146035103,
+          "variant": "keep_low_h1"
+        },
+        "reference": {
+          "decision_margin": 1.2002274161700774,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9864613716053608,
+          "true_label_support": 0.9864613716053608,
+          "variant": "full_reference"
+        }
+      }
+    },
+    {
+      "case_key": "case_2021_fake",
+      "display_name": "2021 LA fake",
+      "family_key": "la2021_internal",
+      "figure": "/tmp/obrempfer/tda_results/sample_explanation_demo_bg16_20260425/figures/case_2021_fake.png",
+      "sample": {
+        "attack": "A07",
+        "audio_path": "/home/obrempfer/Git/obrempfer/tda-audio-deepfake/data/raw/ASVspoof2021_LA/ASVspoof2021_LA_eval/flac/LA_E_4158916.flac",
+        "dataset": "2021_LA",
+        "label": 1,
+        "raw_line": "LA_0025 LA_E_4158916 none - A07 spoof notrim eval",
+        "split": "internal_dev",
+        "utt_id": "LA_E_4158916"
+      },
+      "scores": {
+        "drop_low": {
+          "decision_margin": 2.361277234336786,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9967401111465349,
+          "true_label_support": 0.9967401111465349,
+          "variant": "drop_low"
+        },
+        "gate_off": {
+          "decision_margin": 3.4751176247477225,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999999799098709,
+          "true_label_support": 0.9999999799098709,
+          "variant": "keep_low gate_off"
+        },
+        "keep_low": {
+          "decision_margin": 3.836656424995051,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999999967607748,
+          "true_label_support": 0.9999999967607748,
+          "variant": "keep_low (gate10)"
+        },
+        "keep_low_h0": {
+          "decision_margin": 1.441996865133916,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9683888185723365,
+          "true_label_support": 0.9683888185723365,
+          "variant": "keep_low_h0"
+        },
+        "keep_low_h1": {
+          "decision_margin": 3.3158002321686553,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.999999312721267,
+          "true_label_support": 0.999999312721267,
+          "variant": "keep_low_h1"
+        },
+        "reference": {
+          "decision_margin": 2.787907352916352,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999975308293115,
+          "true_label_support": 0.9999975308293115,
+          "variant": "full_reference"
+        }
+      }
+    },
+    {
+      "case_key": "case_2021_bonafide",
+      "display_name": "2021 LA bona fide",
+      "family_key": "la2021_internal",
+      "figure": "/tmp/obrempfer/tda_results/sample_explanation_demo_bg16_20260425/figures/case_2021_bonafide.png",
+      "sample": {
+        "attack": "-",
+        "audio_path": "/home/obrempfer/Git/obrempfer/tda-audio-deepfake/data/raw/ASVspoof2021_LA/ASVspoof2021_LA_eval/flac/LA_E_9616893.flac",
+        "dataset": "2021_LA",
+        "label": 0,
+        "raw_line": "LA_0031 LA_E_9616893 g722 sin_tx bonafide bonafide notrim progress",
+        "split": "internal_dev",
+        "utt_id": "LA_E_9616893"
+      },
+      "scores": {
+        "drop_low": {
+          "decision_margin": 1.380791039016131,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9649640119769729,
+          "true_label_support": 0.0350359880230271,
+          "variant": "drop_low"
+        },
+        "gate_off": {
+          "decision_margin": -0.9669828199919985,
+          "pred_label": 0,
+          "pred_label_name": "bonafide",
+          "prob_fake": 0.06942496079800463,
+          "true_label_support": 0.9305750392019954,
+          "variant": "keep_low gate_off"
+        },
+        "keep_low": {
+          "decision_margin": -0.8605594263020504,
+          "pred_label": 0,
+          "pred_label_name": "bonafide",
+          "prob_fake": 0.0897064764190804,
+          "true_label_support": 0.9102935235809196,
+          "variant": "keep_low (gate10)"
+        },
+        "keep_low_h0": {
+          "decision_margin": 1.441996865133916,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9683888185723365,
+          "true_label_support": 0.031611181427663504,
+          "variant": "keep_low_h0"
+        },
+        "keep_low_h1": {
+          "decision_margin": -1.7357285273334917,
+          "pred_label": 0,
+          "pred_label_name": "bonafide",
+          "prob_fake": 0.01761885795139421,
+          "true_label_support": 0.9823811420486058,
+          "variant": "keep_low_h1"
+        },
+        "reference": {
+          "decision_margin": 1.4135225591362834,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9714055406748723,
+          "true_label_support": 0.02859445932512772,
+          "variant": "full_reference"
+        }
+      }
+    },
+    {
+      "case_key": "case_2021_failure",
+      "display_name": "2021 LA failure case",
+      "family_key": "la2021_internal",
+      "figure": "/tmp/obrempfer/tda_results/sample_explanation_demo_bg16_20260425/figures/case_2021_failure.png",
+      "sample": {
+        "attack": "-",
+        "audio_path": "/home/obrempfer/Git/obrempfer/tda-audio-deepfake/data/raw/ASVspoof2021_LA/ASVspoof2021_LA_eval/flac/LA_E_3557123.flac",
+        "dataset": "2021_LA",
+        "label": 0,
+        "raw_line": "LA_0050 LA_E_3557123 alaw loc_tx bonafide bonafide notrim eval",
+        "split": "internal_dev",
+        "utt_id": "LA_E_3557123"
+      },
+      "scores": {
+        "drop_low": {
+          "decision_margin": 1.668169025768301,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9823797845061938,
+          "true_label_support": 0.017620215493806213,
+          "variant": "drop_low"
+        },
+        "gate_off": {
+          "decision_margin": 1.7526083532028567,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.991466720641073,
+          "true_label_support": 0.008533279358927004,
+          "variant": "keep_low gate_off"
+        },
+        "keep_low": {
+          "decision_margin": 2.5215142068471375,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9999961543793567,
+          "true_label_support": 3.845620643261327e-06,
+          "variant": "keep_low (gate10)"
+        },
+        "keep_low_h0": {
+          "decision_margin": 1.441996865133916,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9683888185723365,
+          "true_label_support": 0.031611181427663504,
+          "variant": "keep_low_h0"
+        },
+        "keep_low_h1": {
+          "decision_margin": 1.9323864981443122,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9884066238276167,
+          "true_label_support": 0.011593376172383318,
+          "variant": "keep_low_h1"
+        },
+        "reference": {
+          "decision_margin": 2.130574624201053,
+          "pred_label": 1,
+          "pred_label_name": "spoof",
+          "prob_fake": 0.9952313491456521,
+          "true_label_support": 0.004768650854347856,
+          "variant": "full_reference"
+        }
+      }
+    }
+  ]
+}
