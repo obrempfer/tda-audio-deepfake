@@ -75,6 +75,7 @@ This file is the running record for benchmark setup, implementation changes that
 | 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | low-band cubical field, homology ablation | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | Low-band H1 carries most of the signal: H0 only `AUC 0.877, EER 0.193`; H1 only `AUC 0.956, EER 0.106`; H0+H1 `AUC 0.974, EER 0.075` |
 | 2026-04-18 | balanced train CV, bounded subset (`n=1000`) | low-band cubical field, `C` and gate robustness | n/a | landscape (`layers=7`, `bins=120`) | SVM | varies | varies | Low-band result is stable across nearby classifier settings: `C=2` `AUC 0.972, EER 0.078`; `C=4` `AUC 0.974, EER 0.075`; `C=8` `AUC 0.975, EER 0.078`; gate off remained close at `AUC 0.974, EER 0.077` |
 | 2026-04-18/19 | train→dev held-out eval (`train n=1000`, full dev `n=24844`) | best cubical field vs low-band variants | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | n/a | varies | Full-dev check confirms the low-band gain: reference `AUC 0.958, EER 0.103`; keep low `AUC 0.966, EER 0.090`; low + lower mid `AUC 0.965, EER 0.093`; keep-low H1 only `AUC 0.965, EER 0.095` |
+| 2026-04-25 | train→dev held-out eval (`train n=1000`, full dev `n=24844`) | low-band cubical field, H2 curiosity pass | n/a | landscape (`layers=7`, `bins=120`) | SVM (`C=4`) | varies | varies | H2 adds nothing on the 2-D cubical setup: H2 only `AUC 0.500, EER 0.500`; H1+H2 exactly matched H1 only `AUC 0.9649, EER 0.0949`; H0+H1+H2 exactly matched H0+H1 `AUC 0.9663, EER 0.0896` |
 
 ### Cross-Dataset 2019 LA → 2021 LA Full Eval
 
@@ -167,6 +168,7 @@ This table lines up the strongest directly comparable cubical-family anchors acr
 - Frequency-band ablations moved the current read from "full mel field is best" to "low mel band carries most of the useful topology." Keeping only the low band improved bounded CV to `AUC 0.974`, `EER 0.075`; dropping the low band caused a large collapse.
 - Full-dev held-out evaluation (`train n=1000`, full dev `n=24844`) confirmed the low-band gain: keep-low `AUC 0.966`, `EER 0.090` vs full-field reference `AUC 0.958`, `EER 0.103`.
 - Homology ablation indicates H1 carries most of the discriminative power. H0+H1 remains best in CV, but low-band H1-only is close on full dev (`AUC 0.965`, `EER 0.095`).
+- The bounded H2 curiosity pass on the same 2019 low-band holdout setup says the current homology story is already complete for this 2-D cubical pipeline: H2-only collapsed to chance (`AUC 0.500`, `EER 0.500`), and adding H2 left both H1-only and H0+H1 unchanged to four decimal places.
 - Full 2019 LA → 2021 LA transfer is materially weaker than the in-domain 2019 dev checks, but the low-band story survives. On the full 2021 LA eval set, keep-low gave the best AUC among the main transfer configs (`0.8298`), while keep-low H1 gave the best EER (`0.2116`).
 - The 2021 LA transfer follow-ups suggest only modest gains from small local retuning: gate12 lifted transfer AUC to `0.8329`, and keep-low H1 with `C=2` reduced transfer EER to `0.2100`.
 - The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), low-band transfer remained the strongest family, and the follow-up sweep moved the winner to gate-off (`AUC 0.7984`, `EER 0.2658`). The tiny `C=2/4/8` check was effectively flat, so further DF tuning is not a priority.
@@ -179,7 +181,7 @@ This table lines up the strongest directly comparable cubical-family anchors acr
 ## Next Runs
 
 1. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
-2. Build the small sample-level explanation mini-demo: one 2019 LA fake, one 2021 LA fake, one bona fide sample, and optionally one failure case scored under the main field variants.
-3. Expand DF transfer beyond `part00`, or at least to a larger multi-part balanced slice, so the DF conclusions are not bottlenecked by one archive shard.
-4. Repeat the strongest transfer/internal checks across 2-3 train seeds to separate real gains from split variance.
-5. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary transfer branch family, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant and the best bounded DF variant.
+2. Expand DF transfer beyond `part00`, or at least to a larger multi-part balanced slice, so the DF conclusions are not bottlenecked by one archive shard.
+3. Repeat the strongest transfer/internal checks across 2-3 train seeds to separate real gains from split variance.
+4. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary transfer branch family, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant and the best bounded DF variant.
+5. Treat the H2 question as provisionally closed for this 2-D cubical pipeline unless a future 3-D / multi-channel field representation changes the topological dimensionality.
