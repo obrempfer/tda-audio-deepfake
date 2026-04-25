@@ -56,6 +56,13 @@ case "$FOLLOWUP_SET" in
       "keep_low_c8|configs/experiments/ablation/cubical_best_band_keep_low_c8.yaml"
     )
     ;;
+  gate_off_c)
+    declare -a RUNS=(
+      "keep_low_gate_off_c2|configs/experiments/ablation/cubical_best_band_keep_low_gate_off_c2.yaml"
+      "keep_low_gate_off_c4|configs/experiments/ablation/cubical_best_band_keep_low_gate_off.yaml"
+      "keep_low_gate_off_c8|configs/experiments/ablation/cubical_best_band_keep_low_gate_off_c8.yaml"
+    )
+    ;;
   keep_low_h1_c)
     declare -a RUNS=(
       "keep_low_h1_c2|configs/experiments/ablation/cubical_best_band_keep_low_h1_only_c2.yaml"
@@ -64,7 +71,7 @@ case "$FOLLOWUP_SET" in
     )
     ;;
   *)
-    echo "Unsupported FOLLOWUP_SET='$FOLLOWUP_SET'. Use one of: gates, keep_low_c, keep_low_h1_c." >&2
+    echo "Unsupported FOLLOWUP_SET='$FOLLOWUP_SET'. Use one of: gates, keep_low_c, gate_off_c, keep_low_h1_c." >&2
     exit 1
     ;;
 esac
