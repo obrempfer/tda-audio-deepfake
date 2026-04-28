@@ -1,0 +1,50 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+spectrogram:
+  kind: mel
+  n_mels: 64
+  power: 2.0
+  fmin: 0.0
+  fmax:
+  log_scale: true
+  compression: db
+  smoothing: gaussian
+  smoothing_sigma: 0.5
+  smoothing_axis: both
+  band_mask_mode: keep_low
+  band_split_low: 0.33
+  band_split_high: 0.66
+  band_mask_fill: zero
+  energy_gate_percentile: 10
+  energy_gate_fill: zero
+  normalize: false
+  normalization_method: none
+  max_frames: 256
+
+morse_smale:
+  implementation: topopy
+  graph_max_neighbors: 4
+  graph_relaxed: false
+  normalization:
+  simplification: difference
+  neighborhood_size: 3
+  top_k_basins: 8
+  include_extrema_values: true
+  top_k_extrema: 8
+
+topology:
+  complex: morse_smale
+
+vectorization:
+  method: statistics
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 4.0
+  cv_folds: 5
+  random_state: 42

@@ -28,6 +28,9 @@ This file is the running record for benchmark setup, implementation changes that
 - `2026-04-24`: parallelized per-utterance feature extraction with explicit `train/eval` worker controls and BLAS/OpenMP thread caps, so large eval and transfer runs can use the lab CPU nodes efficiently.
 - `2026-04-24`: refactored cache reuse so related cubical configs can share intermediate mel-grid / topology / vectorization stages instead of recomputing the full pipeline for every nearby variant.
 - `2026-04-25`: added reproducible experiment tooling for ASVspoof 2021 DF transfer smoke tests and internal ASVspoof 2021 LA train/dev/test splits.
+- `2026-04-25`: added a topology-only neural experiment stack with explicit feature blocks, a linear baseline, a flat MLP, a staged robust-core-first MLP, and per-block ablation support. The default block layout is low-band `H1` core, low-band `H0` auxiliary, and full-field `H0+H1` auxiliary.
+- `2026-04-27`: added matched topopy Morse-Smale configs and lightweight sweep runners for in-domain holdout checks, bounded parameter sweeps, and cross-dataset transfer probes.
+- `2026-04-28`: completed a bounded Morse-Smale keep-low sweep over graph neighborhood size and topopy normalization; `graph_max_neighbors=4`, `normalization=None` was the clear holdout winner.
 
 ## Results
 
@@ -156,6 +159,65 @@ This table lines up the strongest directly comparable cubical-family anchors acr
 | 2021 LA internal in-domain | internal 2021 LA train/dev (`train max=20000`, `dev max=10000`) | `AUC 0.9440`, `EER 0.1222` | gate off: `AUC 0.9591`, `EER 0.1117`; keep low / gate10 best `EER 0.1096` | keep low H1: `AUC 0.9442`, `EER 0.1229` | Low band still matters, but H1-only is not the winner in-domain |
 | 2021 DF bounded transfer | 2019 LA train (`n=1000`) → DF part 1 balanced subset (`n=5000`) | `AUC 0.7777`, `EER 0.2844` | keep low + gate off + `C=4`: `AUC 0.7984`, `EER 0.2658` | keep low H1: `AUC 0.7824`, `EER 0.2798` | DF retains nontrivial signal, but it is clearly weaker than either LA setting |
 
+### Topology-Only Neural Models
+
+These runs keep the input representation purely topological and compare three heads over the same explicit block layout:
+
+- core block: low-band `H1`
+- auxiliary block A: low-band `H0`
+- auxiliary block B: full-field `H0+H1`
+
+Training used the 2019 balanced-train subset (`n=1000`) with a balanced 2019 dev validation subset (`n=5000`). Evaluation then covered full 2019 dev, full 2021 LA transfer, and the bounded DF transfer subset (`n=5000`).
+
+| Date | Model | 2019 dev eval | 2021 LA transfer | 2021 DF bounded transfer | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-25 | linear topology baseline | `AUC 0.9394`, `EER 0.1289` | `AUC 0.7923`, `EER 0.2573` | `AUC 0.7454`, `EER 0.3024` | Reference non-neural head on the same block layout |
+| 2026-04-25 | flat MLP | `AUC 0.9716`, `EER 0.0844` | `AUC 0.8165`, `EER 0.2299` | `AUC 0.7825`, `EER 0.2746` | All blocks visible from the start; better than the linear baseline everywhere |
+| 2026-04-25 | staged MLP | `AUC 0.9751`, `EER 0.0784` | `AUC 0.8275`, `EER 0.2240` | `AUC 0.7897`, `EER 0.2730` | Best topology-only neural result so far; trains `H1` core first, then adds `H0`, then full-field auxiliary blocks |
+
+Block-ablation read from the same neural run:
+
+- linear baseline: transfer performance still leans heavily on the full-field auxiliary block. On 2021 LA transfer, removing the full-field block dropped AUC by `0.1715`, while removing the low-band `H1` core changed AUC by only `0.0095`.
+- flat MLP: improves all metrics over the linear baseline, but still leans on broader auxiliary structure in transfer. On 2021 LA transfer, removing the full-field auxiliary block dropped AUC by `0.0336`, versus `0.0059` for removing the `H1` core. On DF transfer, the same pattern held (`0.0318` vs `0.0033`).
+- staged MLP: shifts the dependency back toward the low-band `H1` core. On 2021 LA transfer, removing the core dropped AUC by `0.0430`, while removing either auxiliary block changed AUC by `0.0087` or less. On DF transfer, removing the core dropped AUC by `0.0272`, again larger than either auxiliary block.
+
+### Morse-Smale Controls and Bounded Tuning
+
+These runs use the exact `topopy` Morse-Smale branch with statistics-vector signatures. The recent control block was designed to answer whether the apparent discrepancy between an older local CV artifact and the new transfer-oriented Morse runs came from the Morse branch itself or from protocol/config drift.
+
+| Date | Setup | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-16 | full balanced-train CV (`n=5160`) | legacy `morse_smale_mel_svm` | 0.9101 | 0.1651 | Prior local artifact; older ungated min-max-normalized full-field Morse setup |
+| 2026-04-27 | `2019 train n=1000 -> balanced 2019 dev n=5000` | legacy `morse_smale_mel_svm` | 0.8502 | 0.2350 | Protocol-matched control for the older Morse config |
+| 2026-04-27 | `2019 train n=1000 -> balanced 2019 dev n=5000` | matched `keep_low` (`k=8`, `normalization=None`) | 0.8645 | 0.2212 | Better than the legacy config on the same holdout protocol |
+| 2026-04-28 | full balanced-train CV (`n=5160`) | matched `keep_low`, `k=4`, `normalization=None` | 0.8695 | 0.2190 | Full-CV check on the bounded-sweep winner |
+
+Bounded keep-low sweep on the stricter holdout protocol (`2019 train n=1000 -> balanced 2019 dev n=5000`):
+
+| Date | Morse keep-low sweep | AUC | EER | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-04-28 | `k=4`, `normalization=None` | 0.8723 | 0.2094 | Best bounded Morse-Smale holdout result so far |
+| 2026-04-28 | `k=4`, `normalization=feature` | 0.7980 | 0.2804 | Strong collapse; feature normalization is harmful at low `k` |
+| 2026-04-28 | `k=8`, `normalization=None` | 0.8645 | 0.2212 | Pre-sweep matched keep-low reference |
+| 2026-04-28 | `k=8`, `normalization=feature` | 0.8523 | 0.2256 | Mild degradation relative to `None` |
+| 2026-04-28 | `k=12`, `normalization=None` | 0.8645 | 0.2212 | Essentially identical to `k=8` |
+| 2026-04-28 | `k=12`, `normalization=feature` | 0.8636 | 0.2206 | Nearly unchanged relative to `None` |
+| 2026-04-28 | `k=16`, `normalization=None` | 0.8645 | 0.2212 | Essentially identical to `k=8/12` |
+| 2026-04-28 | `k=16`, `normalization=feature` | 0.8636 | 0.2206 | Nearly unchanged relative to `None` |
+
+### Morse-Smale Cross-Dataset Transfer
+
+These runs use the matched topopy Morse-Smale family trained on the balanced 2019 LA train subset (`n=1000`).
+
+| Date | Train / Eval | Config | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-04-27 | 2019 LA train (`n=1000`) → 2021 LA full eval (`n=181566`) | Morse full field | 0.8189 | 0.2216 | Matched full-field Morse transfer anchor |
+| 2026-04-27 | 2019 LA train (`n=1000`) → 2021 LA full eval (`n=181566`) | Morse keep low | 0.8381 | 0.2080 | Best Morse transfer result so far; slightly ahead of the best cubical branch on this target |
+| 2026-04-27 | 2019 LA train (`n=1000`) → 2021 LA full eval (`n=181566`) | Morse keep low + gate off | 0.8222 | 0.2498 | Gate-off hurts Morse on 2021 LA |
+| 2026-04-27 | 2019 LA train (`n=1000`) → bounded 2021 DF (`n=5000`) | Morse full field | 0.7601 | 0.2852 | Best Morse EER on the bounded DF block |
+| 2026-04-27 | 2019 LA train (`n=1000`) → bounded 2021 DF (`n=5000`) | Morse keep low | 0.7715 | 0.2884 | Best Morse DF AUC, but not best EER |
+| 2026-04-27 | 2019 LA train (`n=1000`) → bounded 2021 DF (`n=5000`) | Morse keep low + gate off | 0.7670 | 0.3050 | Gate-off also hurts Morse on DF |
+
 ## Current Read
 
 - TDA-derived features contain strong signal for this task, and the cubical branch now performs at a competitive level on the current benchmark setup.
@@ -174,14 +236,25 @@ This table lines up the strongest directly comparable cubical-family anchors acr
 - The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), low-band transfer remained the strongest family, and the follow-up sweep moved the winner to gate-off (`AUC 0.7984`, `EER 0.2658`). The tiny `C=2/4/8` check was effectively flat, so further DF tuning is not a priority.
 - The internal 2021 LA train/dev sweep says the low band still matters in-domain, but the exact winner shifts relative to the 2019-centered story: keep-low / gate10 gave the best EER (`0.1096`), gate-off gave the best AUC (`0.9591`), H1-only no longer wins, and H0-only remains much weaker.
 - Across all four settings, the broad family conclusion still holds: low-band cubical structure is the most reliable motif, but the exact best gate / homology balance depends on domain. 2019 LA favors low-band strongly, 2021 LA transfer still benefits from low-band/H1 tweaks, 2021 LA in-domain prefers low-band with full H0+H1, and DF transfer prefers low-band with gate-off.
+- The recent Morse-Smale controls say the earlier apparent discrepancy was mostly protocol, not branch failure. When the older local Morse config is rerun on the stricter `train n=1000 -> dev n=5000` holdout protocol, it falls to `AUC 0.8502`, `EER 0.2350`; the newer matched keep-low Morse branch improves that to `AUC 0.8645`, `EER 0.2212`.
+- The bounded Morse-Smale keep-low sweep surfaced one clearly better operating point: `graph_max_neighbors=4`, `normalization=None`, `simplification=difference`, with `AUC 0.8723`, `EER 0.2094` on the bounded holdout protocol.
+- In the tested Morse-Smale neighborhood sweep, `k=8/12/16` were effectively identical and `feature` normalization was usually neutral-to-harmful. The only strong movement came from `k=4`, where `normalization=None` helped and `normalization=feature` collapsed badly.
+- Morse-Smale now looks like a serious transfer branch. On full `2019 -> 2021 LA`, Morse keep-low reached `AUC 0.8381`, `EER 0.2080`, which is slightly better than the current best cubical transfer branch by both AUC and EER.
+- On bounded `2019 -> 2021 DF`, Morse-Smale still looks weaker in absolute target performance than cubical, even though its source-to-target degradation appears smaller. So the current evidence supports “more transfer-stable” more strongly than “universally better.”
+- The topology-only neural pass shows that the current topological vectors still have nonlinear headroom. Both neural heads beat the linear topology baseline on 2019 dev, 2021 LA transfer, and bounded DF transfer.
+- The staged MLP supports the robust-core-first hypothesis at the representation level. Its transfer ablations depend most on the low-band `H1` core, while the flat MLP and linear baseline lean more on the broader full-field auxiliary block.
+- The staged MLP is the best topology-only neural head tested so far, but it has not yet beaten the strongest tuned classical cubical transfer branch. For example, the best classical 2021 LA transfer result remains keep-low + gate12 by AUC (`0.8329`) and keep-low H1 + `C=2` by EER (`0.2100`), both ahead of the staged MLP (`0.8275`, `0.2240`).
 - Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
 - Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
+- Best Morse-Smale bounded holdout result so far: keep-low, `graph_max_neighbors=4`, `normalization=None`, `AUC 0.8723`, `EER 0.2094` (`2019 train n=1000 -> balanced 2019 dev n=5000`).
+- Best Morse-Smale `2021 LA` transfer result so far: keep-low, `AUC 0.8381`, `EER 0.2080`.
+- Best topology-only neural result so far: staged MLP, `2019 dev AUC 0.9751`, `EER 0.0784`; `2021 LA transfer AUC 0.8275`, `EER 0.2240`; bounded `2021 DF transfer AUC 0.7897`, `EER 0.2730`.
 - Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
 
 ## Next Runs
 
-1. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
-2. Expand DF transfer beyond `part00`, or at least to a larger multi-part balanced slice, so the DF conclusions are not bottlenecked by one archive shard.
-3. Repeat the strongest transfer/internal checks across 2-3 train seeds to separate real gains from split variance.
-4. Keep `configs/experiments/ablation/cubical_best_band_keep_low.yaml` as the primary transfer branch family, while tracking `gate_off` as the best current in-domain 2021 LA AUC variant and the best bounded DF variant.
+1. Promote the Morse-Smale keep-low winner (`k=4`, `normalization=None`) onto the `2021 LA` and bounded `2021 DF` transfer protocols to test whether the holdout improvement survives the same domain shifts.
+2. If the winner keeps its transfer behavior, do one small Morse-Smale follow-up over signature-content knobs (`top_k_basins`, `include_extrema_values`) rather than another broad graph sweep.
+3. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
+4. Repeat the topology-only neural comparison across 2-3 train seeds and, if runtime permits, a larger 2019 train budget, so the staged-vs-flat result is not resting on one `n=1000` seed.
 5. Treat the H2 question as provisionally closed for this 2-D cubical pipeline unless a future 3-D / multi-channel field representation changes the topological dimensionality.
