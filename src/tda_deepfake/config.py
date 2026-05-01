@@ -148,11 +148,40 @@ class MorseSmaleConfig:
     TOP_K_EXTREMA: int = 8
 
 
+class TakensConfig:
+    """Time-delay embedding parameters for scalar audio signals.
+
+    Attributes:
+        SIGNAL_TYPE: Scalar signal family ('low_wave', 'low_env', 'full_wave', 'full_env').
+        LOWPASS_CUTOFF_HZ: Optional low-pass cutoff for low-band waveform extraction.
+            When None, a cutoff is derived from the low-band split fraction.
+        FILTER_ORDER: Butterworth low-pass order for low-band waveform extraction.
+        SIGNAL_NORMALIZATION: Per-sample signal normalization ('none' or 'zscore').
+        ENVELOPE_COMPRESSION: Optional envelope compression ('none' or 'log1p').
+        ENVELOPE_SMOOTH_SIGMA: Gaussian smoothing sigma in envelope frames.
+        EMBEDDING_DIM: Takens embedding dimension.
+        DELAY: Delay in samples of the stride-subsampled signal.
+        STRIDE: Uniform decimation applied before delay embedding.
+        MAX_POINTS: Optional cap on Takens points before PH.
+    """
+    SIGNAL_TYPE: str = "low_wave"
+    LOWPASS_CUTOFF_HZ: Optional[float] = None
+    FILTER_ORDER: int = 5
+    SIGNAL_NORMALIZATION: str = "zscore"
+    ENVELOPE_COMPRESSION: str = "log1p"
+    ENVELOPE_SMOOTH_SIGMA: float = 1.0
+    EMBEDDING_DIM: int = 5
+    DELAY: int = 4
+    STRIDE: int = 80
+    MAX_POINTS: Optional[int] = 300
+
+
 class TopologyConfig:
     """Persistent homology computation parameters.
 
     Attributes:
-        COMPLEX: Topological complex family ('vietoris_rips', 'cubical', 'knn_flag', 'morse_smale', or 'morse_smale_approx').
+        COMPLEX: Topological complex family ('vietoris_rips', 'cubical', 'knn_flag',
+            'morse_smale', 'morse_smale_approx', or 'takens_ph').
         MAX_HOMOLOGY_DIM: Highest homological dimension to compute (0=H0, 1=H1).
         DISTANCE_METRIC: Distance metric for Vietoris-Rips ('euclidean' or 'precomputed').
         CUBICAL_FILTRATION: Cubical filtration polarity ('sublevel' or 'superlevel').
@@ -242,6 +271,7 @@ _KEY_MAP = {
     "point_cloud": PointCloudConfig,
     "spectrogram": SpectrogramConfig,
     "morse_smale": MorseSmaleConfig,
+    "takens": TakensConfig,
     "topology": TopologyConfig,
     "vectorization": VectorizationConfig,
     "classifier": ClassifierConfig,
@@ -289,7 +319,8 @@ def configure_audio(sample_rate: Optional[int] = None, n_mfcc: Optional[int] = N
 def load_config_from_yaml(yaml_path: str) -> None:
     """Load configuration from a YAML file and update config class attributes.
 
-    Supported top-level keys: audio, feature, point_cloud, spectrogram, topology, vectorization, classifier, ablation.
+    Supported top-level keys: audio, feature, point_cloud, spectrogram, morse_smale,
+    takens, topology, vectorization, classifier, ablation.
     Each key maps to a dict of attribute names (lowercase) and their values.
 
     Args:

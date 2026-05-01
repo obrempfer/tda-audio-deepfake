@@ -39,6 +39,8 @@ from tda_deepfake.features import (
     postprocess_mel_spectrogram,
 )
 from tda_deepfake.topology import (
+    build_takens_embedding,
+    build_takens_signal,
     compute_morse_smale_signature,
     compute_persistence,
     flatten_vector_blocks,
@@ -52,6 +54,7 @@ from tda_deepfake.config import (
     PointCloudConfig,
     MorseSmaleConfig,
     SpectrogramConfig,
+    TakensConfig,
     TopologyConfig,
     VectorizationConfig,
     apply_runtime_config,
@@ -379,6 +382,50 @@ def _morse_smale_signature_cache_key(processed_grid_key: str) -> str:
     )
 
 
+def _takens_signal_cache_key() -> str:
+    """Cache key for one scalar Takens signal per utterance."""
+    return _stable_digest(
+        {
+            "stage": "takens_signal",
+            "audio": {
+                "sample_rate": AudioConfig.SAMPLE_RATE,
+                "window_size_ms": AudioConfig.WINDOW_SIZE_MS,
+                "hop_size_ms": AudioConfig.HOP_SIZE_MS,
+            },
+            "spectrogram": {
+                "n_mels": SpectrogramConfig.N_MELS,
+                "power": SpectrogramConfig.POWER,
+                "fmin": SpectrogramConfig.FMIN,
+                "fmax": SpectrogramConfig.FMAX,
+                "band_split_low": SpectrogramConfig.BAND_SPLIT_LOW,
+            },
+            "takens": {
+                "signal_type": TakensConfig.SIGNAL_TYPE,
+                "lowpass_cutoff_hz": TakensConfig.LOWPASS_CUTOFF_HZ,
+                "filter_order": TakensConfig.FILTER_ORDER,
+                "signal_normalization": TakensConfig.SIGNAL_NORMALIZATION,
+                "envelope_compression": TakensConfig.ENVELOPE_COMPRESSION,
+                "envelope_smooth_sigma": TakensConfig.ENVELOPE_SMOOTH_SIGMA,
+            },
+        }
+    )
+
+
+def _takens_embedding_cache_key(signal_key: str) -> str:
+    """Cache key for the Takens delay-embedded point set before subsampling."""
+    return _stable_digest(
+        {
+            "stage": "takens_embedding",
+            "signal_key": signal_key,
+            "takens": {
+                "embedding_dim": TakensConfig.EMBEDDING_DIM,
+                "delay": TakensConfig.DELAY,
+                "stride": TakensConfig.STRIDE,
+            },
+        }
+    )
+
+
 def _load_or_compute_stage_array(
     cache_file: Path,
     compute_fn: Callable[[], np.ndarray],
@@ -413,6 +460,7 @@ def _load_or_compute_dimensional_bundle(
 def _compute_feature_vector(audio_path: Path, cache_dir: Path, method: str, n_bins: int, max_points: int) -> np.ndarray:
     """Compute one utterance feature vector, reusing staged intermediate caches."""
     audio: np.ndarray | None = None
+    persistence_complex = TopologyConfig.COMPLEX
 
     def _audio() -> np.ndarray:
         nonlocal audio
@@ -485,6 +533,56 @@ def _compute_feature_vector(audio_path: Path, cache_dir: Path, method: str, n_bi
 
         topology_object = grid
         topology_object_key = processed_grid_key
+    elif TopologyConfig.COMPLEX == "takens_ph":
+        takens_signal_key = _takens_signal_cache_key()
+        takens_signal_file = _stage_cache_file(cache_dir, "takens_signal", audio_path, takens_signal_key)
+        takens_signal = _load_or_compute_stage_array(
+            takens_signal_file,
+            lambda: build_takens_signal(
+                _audio(),
+                sample_rate=AudioConfig.SAMPLE_RATE,
+                signal_type=TakensConfig.SIGNAL_TYPE,
+                lowpass_cutoff_hz=TakensConfig.LOWPASS_CUTOFF_HZ,
+                filter_order=TakensConfig.FILTER_ORDER,
+                signal_normalization=TakensConfig.SIGNAL_NORMALIZATION,
+                envelope_compression=TakensConfig.ENVELOPE_COMPRESSION,
+                envelope_smooth_sigma=TakensConfig.ENVELOPE_SMOOTH_SIGMA,
+                n_mels=SpectrogramConfig.N_MELS,
+                power=SpectrogramConfig.POWER,
+                fmin=SpectrogramConfig.FMIN,
+                fmax=SpectrogramConfig.FMAX,
+                band_split_low=SpectrogramConfig.BAND_SPLIT_LOW,
+            ),
+        )
+
+        takens_embedding_key = _takens_embedding_cache_key(takens_signal_key)
+        takens_embedding_file = _stage_cache_file(cache_dir, "takens_embedding", audio_path, takens_embedding_key)
+        takens_embedding = _load_or_compute_stage_array(
+            takens_embedding_file,
+            lambda: build_takens_embedding(
+                takens_signal,
+                embedding_dim=TakensConfig.EMBEDDING_DIM,
+                delay=TakensConfig.DELAY,
+                stride=TakensConfig.STRIDE,
+            ),
+        )
+
+        point_cloud_key = _point_cloud_cache_key(takens_embedding_key, max_points)
+        point_cloud_file = _stage_cache_file(cache_dir, "point_cloud", audio_path, point_cloud_key)
+        topology_object = _load_or_compute_stage_array(
+            point_cloud_file,
+            lambda: build_point_cloud(
+                takens_embedding,
+                max_points=max_points,
+                normalize=PointCloudConfig.NORMALIZE,
+                normalization_method=PointCloudConfig.NORMALIZATION_METHOD,
+                projection=PointCloudConfig.PROJECTION,
+                projection_dim=PointCloudConfig.PROJECTION_DIM,
+                projection_random_state=PointCloudConfig.PROJECTION_RANDOM_STATE,
+            ),
+        )
+        topology_object_key = point_cloud_key
+        persistence_complex = "vietoris_rips"
     else:
         feature_matrix_key = _feature_matrix_cache_key()
         feature_matrix_file = _stage_cache_file(cache_dir, "feature_matrix", audio_path, feature_matrix_key)
@@ -525,7 +623,7 @@ def _compute_feature_vector(audio_path: Path, cache_dir: Path, method: str, n_bi
         requested_max_dim=TopologyConfig.MAX_HOMOLOGY_DIM,
         compute_fn=lambda max_dim: compute_persistence(
             topology_object,
-            complex_type=TopologyConfig.COMPLEX,
+            complex_type=persistence_complex,
             max_dim=max_dim,
             metric=TopologyConfig.DISTANCE_METRIC,
             cubical_filtration=TopologyConfig.CUBICAL_FILTRATION,
@@ -764,6 +862,18 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "include_extrema_values": MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
             "top_k_extrema": MorseSmaleConfig.TOP_K_EXTREMA,
         },
+        "takens": {
+            "signal_type": TakensConfig.SIGNAL_TYPE,
+            "lowpass_cutoff_hz": TakensConfig.LOWPASS_CUTOFF_HZ,
+            "filter_order": TakensConfig.FILTER_ORDER,
+            "signal_normalization": TakensConfig.SIGNAL_NORMALIZATION,
+            "envelope_compression": TakensConfig.ENVELOPE_COMPRESSION,
+            "envelope_smooth_sigma": TakensConfig.ENVELOPE_SMOOTH_SIGMA,
+            "embedding_dim": TakensConfig.EMBEDDING_DIM,
+            "delay": TakensConfig.DELAY,
+            "stride": TakensConfig.STRIDE,
+            "max_points": TakensConfig.MAX_POINTS,
+        },
     }
     encoded = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha1(encoded).hexdigest()[:12]
@@ -840,7 +950,12 @@ def main() -> None:
     method = args.method or VectorizationConfig.METHOD
     model = args.model or ClassifierConfig.MODEL
     n_bins = args.n_bins or VectorizationConfig.PI_N_BINS
-    max_points = args.max_points or 300
+    if args.max_points is not None:
+        max_points = args.max_points
+    elif TopologyConfig.COMPLEX == "takens_ph" and TakensConfig.MAX_POINTS is not None:
+        max_points = TakensConfig.MAX_POINTS
+    else:
+        max_points = 300
     train_workers = args.train_workers if args.train_workers is not None else args.num_workers
     eval_workers = args.eval_workers if args.eval_workers is not None else args.num_workers
 

@@ -1,0 +1,50 @@
+audio:
+  sample_rate: 16000
+  n_mfcc: 13
+  include_delta: true
+  include_delta2: true
+
+point_cloud:
+  normalize: false
+  normalization_method: none
+  projection: none
+  projection_dim:
+
+spectrogram:
+  kind: mel
+  n_mels: 64
+  power: 2.0
+  fmin: 0.0
+  fmax:
+  band_split_low: 0.33
+
+takens:
+  signal_type: low_wave
+  lowpass_cutoff_hz:
+  filter_order: 5
+  signal_normalization: zscore
+  envelope_compression: log1p
+  envelope_smooth_sigma: 1.0
+  embedding_dim: 3
+  delay: 2
+  stride: 80
+  max_points: 300
+
+topology:
+  complex: takens_ph
+  max_homology_dim: 1
+  distance_metric: euclidean
+  max_edge_length:
+  coeff: 2
+
+vectorization:
+  method: landscape
+  landscape_n_layers: 5
+  landscape_n_bins: 100
+
+classifier:
+  model: svm
+  svm_kernel: rbf
+  svm_c: 4.0
+  cv_folds: 5
+  random_state: 42
