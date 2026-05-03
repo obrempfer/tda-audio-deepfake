@@ -377,6 +377,7 @@ def _morse_smale_signature_cache_key(processed_grid_key: str) -> str:
                 "top_k_basins": MorseSmaleConfig.TOP_K_BASINS,
                 "include_extrema_values": MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
                 "top_k_extrema": MorseSmaleConfig.TOP_K_EXTREMA,
+                "feature_subset": MorseSmaleConfig.FEATURE_SUBSET,
             },
         }
     )
@@ -528,6 +529,7 @@ def _compute_feature_vector(audio_path: Path, cache_dir: Path, method: str, n_bi
                     top_k_basins=MorseSmaleConfig.TOP_K_BASINS,
                     include_extrema_values=MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
                     top_k_extrema=MorseSmaleConfig.TOP_K_EXTREMA,
+                    feature_subset=MorseSmaleConfig.FEATURE_SUBSET,
                 ),
             )
 
@@ -861,6 +863,7 @@ def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
             "top_k_basins": MorseSmaleConfig.TOP_K_BASINS,
             "include_extrema_values": MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
             "top_k_extrema": MorseSmaleConfig.TOP_K_EXTREMA,
+            "feature_subset": MorseSmaleConfig.FEATURE_SUBSET,
         },
         "takens": {
             "signal_type": TakensConfig.SIGNAL_TYPE,

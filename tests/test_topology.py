@@ -109,3 +109,49 @@ def test_compute_morse_smale_signature_fixed_length():
     assert vec1.ndim == 1
     assert vec1.shape == vec2.shape
     assert np.isfinite(vec1).all()
+
+
+def test_compute_morse_smale_signature_feature_subsets():
+    grid = _random_grid(seed=2)
+
+    full = compute_morse_smale_signature(
+        grid,
+        neighborhood_size=3,
+        top_k_basins=4,
+        top_k_extrema=4,
+        feature_subset="full",
+    )
+    counts = compute_morse_smale_signature(
+        grid,
+        neighborhood_size=3,
+        top_k_basins=4,
+        top_k_extrema=4,
+        feature_subset="counts_entropy",
+    )
+    basins = compute_morse_smale_signature(
+        grid,
+        neighborhood_size=3,
+        top_k_basins=4,
+        top_k_extrema=4,
+        feature_subset="basin_fractions",
+    )
+    merge = compute_morse_smale_signature(
+        grid,
+        neighborhood_size=3,
+        top_k_basins=4,
+        top_k_extrema=4,
+        feature_subset="merge_sequence",
+    )
+    extrema = compute_morse_smale_signature(
+        grid,
+        neighborhood_size=3,
+        top_k_basins=4,
+        top_k_extrema=4,
+        feature_subset="extrema_values",
+    )
+
+    assert counts.ndim == 1 and counts.size > 0
+    assert basins.ndim == 1 and basins.size > 0
+    assert merge.ndim == 1 and merge.size > 0
+    assert extrema.ndim == 1 and extrema.size > 0
+    assert full.size == counts.size + basins.size + merge.size + extrema.size

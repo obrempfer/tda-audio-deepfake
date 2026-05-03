@@ -445,13 +445,19 @@ def test_feature_cache_key_changes_with_morse_smale_config():
     from tda_deepfake.config import MorseSmaleConfig
 
     original_top_k = MorseSmaleConfig.TOP_K_BASINS
+    original_subset = MorseSmaleConfig.FEATURE_SUBSET
     try:
         MorseSmaleConfig.TOP_K_BASINS = 4
         key_small = _feature_cache_key("statistics", n_bins=20, max_points=300)
 
         MorseSmaleConfig.TOP_K_BASINS = 8
         key_large = _feature_cache_key("statistics", n_bins=20, max_points=300)
+
+        MorseSmaleConfig.FEATURE_SUBSET = "counts_entropy"
+        key_subset = _feature_cache_key("statistics", n_bins=20, max_points=300)
     finally:
         MorseSmaleConfig.TOP_K_BASINS = original_top_k
+        MorseSmaleConfig.FEATURE_SUBSET = original_subset
 
     assert key_small != key_large
+    assert key_large != key_subset

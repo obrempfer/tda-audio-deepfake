@@ -136,6 +136,9 @@ class MorseSmaleConfig:
         TOP_K_BASINS: Number of largest ascending/descending basins to keep.
         INCLUDE_EXTREMA_VALUES: Whether to include strongest extrema values.
         TOPO_K_EXTREMA: Number of strongest minima/maxima values to keep.
+        FEATURE_SUBSET: Optional signature block selection. Supported values:
+            'full', 'counts_entropy', 'basin_fractions', 'merge_sequence',
+            and 'extrema_values'.
     """
     IMPLEMENTATION: str = "topopy"
     GRAPH_MAX_NEIGHBORS: int = 8
@@ -146,6 +149,7 @@ class MorseSmaleConfig:
     TOP_K_BASINS: int = 8
     INCLUDE_EXTREMA_VALUES: bool = True
     TOP_K_EXTREMA: int = 8
+    FEATURE_SUBSET: str = "full"
 
 
 class TakensConfig:

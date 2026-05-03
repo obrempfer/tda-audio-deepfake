@@ -32,6 +32,7 @@ def compute_morse_smale_signature(
     top_k_basins: int = MorseSmaleConfig.TOP_K_BASINS,
     include_extrema_values: bool = MorseSmaleConfig.INCLUDE_EXTREMA_VALUES,
     top_k_extrema: int = MorseSmaleConfig.TOP_K_EXTREMA,
+    feature_subset: str = MorseSmaleConfig.FEATURE_SUBSET,
 ) -> npt.NDArray[np.float64]:
     """Return a fixed-length Morse-Smale or Morse-Smale-inspired signature."""
     if grid.ndim != 2:
@@ -42,7 +43,7 @@ def compute_morse_smale_signature(
     if implementation == "topopy":
         if not TOPOPY_AVAILABLE:
             raise ImportError("topopy and nglpy are required for implementation='topopy'")
-        return _compute_topopy_signature(
+        blocks = _compute_topopy_signature_blocks(
             grid,
             graph_max_neighbors=graph_max_neighbors,
             graph_relaxed=graph_relaxed,
@@ -52,18 +53,20 @@ def compute_morse_smale_signature(
             include_extrema_values=include_extrema_values,
             top_k_extrema=top_k_extrema,
         )
+        return _select_signature_blocks(blocks, feature_subset)
     if implementation == "approx":
-        return _compute_approx_signature(
+        blocks = _compute_approx_signature_blocks(
             grid,
             neighborhood_size=neighborhood_size,
             top_k_basins=top_k_basins,
             include_extrema_values=include_extrema_values,
             top_k_extrema=top_k_extrema,
         )
+        return _select_signature_blocks(blocks, feature_subset)
     raise ValueError(f"Unknown Morse-Smale implementation: {implementation!r}")
 
 
-def _compute_topopy_signature(
+def _compute_topopy_signature_blocks(
     grid: npt.NDArray[np.float64],
     graph_max_neighbors: int,
     graph_relaxed: bool,
@@ -72,8 +75,8 @@ def _compute_topopy_signature(
     top_k_basins: int,
     include_extrema_values: bool,
     top_k_extrema: int,
-) -> npt.NDArray[np.float64]:
-    """Use topopy's MorseSmaleComplex to extract a fixed-length signature."""
+) -> list[tuple[str, npt.NDArray[np.float64]]]:
+    """Use topopy's MorseSmaleComplex to extract named signature blocks."""
     if graph_max_neighbors <= 0:
         raise ValueError("graph_max_neighbors must be positive")
 
@@ -99,27 +102,47 @@ def _compute_topopy_signature(
     maxima_values = np.sort(values[[i for i, c in enumerate(classifications) if c == "maximum"]])[::-1]
     minima_values = np.sort(values[[i for i, c in enumerate(classifications) if c == "minimum"]])
 
-    features = [
-        float(len(partitions)),
-        float(len(stable)),
-        float(len(unstable)),
-        float(sum(c == "maximum" for c in classifications)),
-        float(sum(c == "minimum" for c in classifications)),
-        float(np.mean(np.abs(np.gradient(grid)[0])) + np.mean(np.abs(np.gradient(grid)[1]))),
-        _entropy_from_sizes([len(v) for v in partitions.values()]),
-        _entropy_from_sizes([len(v) for v in stable.values()]),
-        _entropy_from_sizes([len(v) for v in unstable.values()]),
-        * _largest_fraction_vector([len(v) for v in partitions.values()], total=len(values), top_k=top_k_basins),
-        * _largest_fraction_vector([len(v) for v in stable.values()], total=len(values), top_k=top_k_basins),
-        * _largest_fraction_vector([len(v) for v in unstable.values()], total=len(values), top_k=top_k_basins),
-        * _top_k_padded(sorted((triplet[0] for triplet in merge_sequence.values()), reverse=True), top_k_extrema),
-    ]
-
+    counts_entropy = np.asarray(
+        [
+            float(len(partitions)),
+            float(len(stable)),
+            float(len(unstable)),
+            float(sum(c == "maximum" for c in classifications)),
+            float(sum(c == "minimum" for c in classifications)),
+            float(np.mean(np.abs(np.gradient(grid)[0])) + np.mean(np.abs(np.gradient(grid)[1]))),
+            _entropy_from_sizes([len(v) for v in partitions.values()]),
+            _entropy_from_sizes([len(v) for v in stable.values()]),
+            _entropy_from_sizes([len(v) for v in unstable.values()]),
+        ],
+        dtype=np.float64,
+    )
+    basin_fractions = np.concatenate(
+        [
+            _largest_fraction_vector([len(v) for v in partitions.values()], total=len(values), top_k=top_k_basins),
+            _largest_fraction_vector([len(v) for v in stable.values()], total=len(values), top_k=top_k_basins),
+            _largest_fraction_vector([len(v) for v in unstable.values()], total=len(values), top_k=top_k_basins),
+        ]
+    ).astype(np.float64)
+    merge_block = np.asarray(
+        _top_k_padded(sorted((triplet[0] for triplet in merge_sequence.values()), reverse=True), top_k_extrema),
+        dtype=np.float64,
+    )
+    extrema_block = np.empty(0, dtype=np.float64)
     if include_extrema_values:
-        features.extend(_top_k_padded(maxima_values, top_k_extrema))
-        features.extend(_top_k_padded(minima_values, top_k_extrema))
+        extrema_block = np.asarray(
+            [
+                *_top_k_padded(maxima_values, top_k_extrema),
+                *_top_k_padded(minima_values, top_k_extrema),
+            ],
+            dtype=np.float64,
+        )
 
-    return np.asarray(features, dtype=np.float64)
+    return [
+        ("counts_entropy", counts_entropy),
+        ("basin_fractions", basin_fractions),
+        ("merge_sequence", merge_block),
+        ("extrema_values", extrema_block),
+    ]
 
 
 def _safe_classification(msc: "MorseSmaleComplex", idx: int) -> str:
@@ -129,13 +152,13 @@ def _safe_classification(msc: "MorseSmaleComplex", idx: int) -> str:
     return str(value)
 
 
-def _compute_approx_signature(
+def _compute_approx_signature_blocks(
     grid: npt.NDArray[np.float64],
     neighborhood_size: int,
     top_k_basins: int,
     include_extrema_values: bool,
     top_k_extrema: int,
-) -> npt.NDArray[np.float64]:
+) -> list[tuple[str, npt.NDArray[np.float64]]]:
     """Fallback local approximation from extrema and steepest-flow basins."""
     if neighborhood_size <= 0 or neighborhood_size % 2 == 0:
         raise ValueError("neighborhood_size must be a positive odd integer")
@@ -153,22 +176,56 @@ def _compute_approx_signature(
     ascent_sizes = _largest_region_fractions(ascent_labels, top_k_basins)
     descent_sizes = _largest_region_fractions(descent_labels, top_k_basins)
 
-    features = [
-        float(np.sum(maxima_mask)),
-        float(np.sum(minima_mask)),
-        float(np.mean(gradient_mag)),
-        float(np.std(gradient_mag)),
-        _entropy_from_labels(ascent_labels),
-        _entropy_from_labels(descent_labels),
-        *ascent_sizes.tolist(),
-        *descent_sizes.tolist(),
+    counts_entropy = np.asarray(
+        [
+            float(np.sum(maxima_mask)),
+            float(np.sum(minima_mask)),
+            float(np.mean(gradient_mag)),
+            float(np.std(gradient_mag)),
+            _entropy_from_labels(ascent_labels),
+            _entropy_from_labels(descent_labels),
+        ],
+        dtype=np.float64,
+    )
+    basin_fractions = np.concatenate([ascent_sizes, descent_sizes]).astype(np.float64)
+    merge_block = np.empty(0, dtype=np.float64)
+    extrema_block = np.empty(0, dtype=np.float64)
+    if include_extrema_values:
+        extrema_block = np.asarray(
+            [
+                *_top_k_padded(maxima_values, top_k_extrema),
+                *_top_k_padded(minima_values, top_k_extrema),
+            ],
+            dtype=np.float64,
+        )
+
+    return [
+        ("counts_entropy", counts_entropy),
+        ("basin_fractions", basin_fractions),
+        ("merge_sequence", merge_block),
+        ("extrema_values", extrema_block),
     ]
 
-    if include_extrema_values:
-        features.extend(_top_k_padded(maxima_values, top_k_extrema))
-        features.extend(_top_k_padded(minima_values, top_k_extrema))
 
-    return np.asarray(features, dtype=np.float64)
+def _select_signature_blocks(
+    blocks: list[tuple[str, npt.NDArray[np.float64]]],
+    feature_subset: str,
+) -> npt.NDArray[np.float64]:
+    normalized = feature_subset.strip().lower()
+    block_map = {name: values for name, values in blocks if values.size > 0}
+
+    if normalized == "full":
+        chosen = [values for _, values in blocks if values.size > 0]
+    else:
+        if normalized not in {"counts_entropy", "basin_fractions", "merge_sequence", "extrema_values"}:
+            raise ValueError(f"Unknown Morse-Smale feature subset: {feature_subset!r}")
+        chosen = [block_map.get(normalized, np.empty(0, dtype=np.float64))]
+
+    if not chosen or all(values.size == 0 for values in chosen):
+        raise ValueError(
+            f"Morse-Smale feature subset {feature_subset!r} is empty for the current configuration"
+        )
+    return np.concatenate(chosen).astype(np.float64, copy=False)
 
 
 def _local_extrema_masks(

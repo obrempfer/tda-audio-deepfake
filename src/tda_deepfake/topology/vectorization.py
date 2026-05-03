@@ -186,6 +186,11 @@ def _summary_statistics_blocks(diagrams: list[npt.NDArray]) -> list[npt.NDArray]
     return stats
 
 
+def _summary_statistics_vector(diagrams: list[npt.NDArray]) -> npt.NDArray:
+    """Backward-compatible flat statistics vector used by older tests."""
+    return flatten_vector_blocks(_summary_statistics_blocks(diagrams))
+
+
 def _homology_weight(dim: int, weights: list[float] | None = VectorizationConfig.HOMOLOGY_WEIGHTS) -> float:
     """Return scaling weight for a homology dimension."""
     if not weights:

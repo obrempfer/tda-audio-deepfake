@@ -12,6 +12,7 @@ This file is the running record for benchmark setup, implementation changes that
 - Balanced protocol construction:
   all `2580` bonafide train utterances + `2580` spoof train utterances sampled with seed `42`
 - Recent DF transfer smoke tests were run on `bg16` from the official ASVspoof 2021 DF keys plus the `ASVspoof2021_DF_eval_part00.tar.gz` audio archive, materialized into balanced `/tmp` subsets because the lab home filesystem hit quota during full extraction.
+- Recent MLAAD-tiny experiments were also staged under `bg16` scratch (`/tmp/obrempfer/tda_protocols/` and `/tmp/obrempfer/tda_results*`) because the home filesystem is quota-bound.
 
 ## Implementation Notes That Affect Results
 
@@ -31,6 +32,9 @@ This file is the running record for benchmark setup, implementation changes that
 - `2026-04-25`: added a topology-only neural experiment stack with explicit feature blocks, a linear baseline, a flat MLP, a staged robust-core-first MLP, and per-block ablation support. The default block layout is low-band `H1` core, low-band `H0` auxiliary, and full-field `H0+H1` auxiliary.
 - `2026-04-27`: added matched topopy Morse-Smale configs and lightweight sweep runners for in-domain holdout checks, bounded parameter sweeps, and cross-dataset transfer probes.
 - `2026-04-28`: completed a bounded Morse-Smale keep-low sweep over graph neighborhood size and topopy normalization; `graph_max_neighbors=4`, `normalization=None` was the clear holdout winner.
+- `2026-05-01`: added a Takens / time-delay embedding branch over scalar audio signals, with configurable signal construction (`low_wave`, `low_env`, etc.), delay embedding, PH on the induced point cloud, and the same downstream vectorization/classifier path used elsewhere.
+- `2026-05-01`: added MLAAD subset materialization and internal-diagnostic tooling, including Morse-Smale feature-subset masking (`counts_entropy`, `basin_fractions`, `merge_sequence`, `extrema_values`) so cubical and Morse can be compared under matched MLAAD ablations.
+- `2026-05-02`: added balanced mixed-source protocol generation for ASVspoof 2019 LA + MLAAD English, with equal source contribution and per-source class balance, so source-mixing effects can be tested without quietly changing total train size.
 
 ## Results
 
@@ -218,6 +222,153 @@ These runs use the matched topopy Morse-Smale family trained on the balanced 201
 | 2026-04-27 | 2019 LA train (`n=1000`) → bounded 2021 DF (`n=5000`) | Morse keep low | 0.7715 | 0.2884 | Best Morse DF AUC, but not best EER |
 | 2026-04-27 | 2019 LA train (`n=1000`) → bounded 2021 DF (`n=5000`) | Morse keep low + gate off | 0.7670 | 0.3050 | Gate-off also hurts Morse on DF |
 
+### Takens Exploratory Branch
+
+This bounded sweep tests whether a time-delay embedding view of the signal recovers useful topology at all. The first pass used the 2019 LA bounded holdout protocol and compared low-band waveform embeddings against low-band energy-envelope embeddings.
+
+| Date | Setup | Signal / embedding | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-01 | `2019 train n=1000 -> balanced 2019 dev n=5000` | low wave, `m=5`, `delay=8` | 0.687 | 0.364 | Best Takens result in the first bounded sweep |
+| 2026-05-01 | `2019 train n=1000 -> balanced 2019 dev n=5000` | low wave, `m=5`, `delay=4` | 0.688 | 0.367 | Nearly tied with the best EER result |
+| 2026-05-01 | `2019 train n=1000 -> balanced 2019 dev n=5000` | low env, best result (`m=3`, `delay=1`) | 0.659 | 0.385 | Envelopes carry signal, but trail waveform embeddings |
+
+Read from the bounded sweep:
+
+- Takens is clearly above weak/noisy behavior, so the branch is real.
+- Low-band waveform embeddings are consistently better than low-band energy envelopes.
+- Larger embedding dimension (`m=5`) helped, and longer delays (`4-8`) were strongest on the waveform branch.
+- The branch is still far weaker than the current cubical and Morse-Smale pipelines, so it remains exploratory rather than a mainline replacement.
+
+### MLAAD-Tiny Transfer and In-Domain Results
+
+These runs use the current best cubical and Morse-Smale anchors:
+
+- cubical: `keep_low_gate12`
+- Morse-Smale: `keep_low_k4_norm_none`
+
+Transfer probes are trained on `ASVspoof 2019 LA train n=1000` unless otherwise stated.
+
+| Date | Train / Eval | Branch | AUC | EER | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny en` full balanced (`n=12140`) | cubical | 0.5467 | 0.4657 | Full English tiny transfer probe; small earlier `500/500` probe was optimistic |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny en` full balanced (`n=12140`) | Morse-Smale | 0.6265 | 0.4158 | MS clearly outperforms cubical on English MLAAD transfer |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny de` balanced (`n=2000`) | cubical | 0.4240 | 0.5570 | German transfer is much harder for both branches |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny de` balanced (`n=2000`) | Morse-Smale | 0.5550 | 0.4660 | MS remains less bad than cubical under the stronger language shift |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny en,de` full balanced (`n=14780`) | cubical | 0.5285 | 0.4798 | Mixed-language tiny transfer sits between English-only and German-only |
+| 2026-05-01 | `2019 LA train n=1000 -> MLAAD-tiny en,de` full balanced (`n=14780`) | Morse-Smale | 0.6140 | 0.4234 | Same qualitative ordering as English-only |
+| 2026-05-01 | `MLAAD-tiny en train+dev = 10320 -> MLAAD-tiny en test = 1820` | cubical | 0.9281 | 0.1566 | Strong in-domain English result |
+| 2026-05-01 | `MLAAD-tiny en train+dev = 10320 -> MLAAD-tiny en test = 1820` | Morse-Smale | 0.9864 | 0.0357 | MS is dramatically better than cubical in-domain on English MLAAD |
+| 2026-05-01 | `MLAAD-tiny de train+dev = 2244 -> MLAAD-tiny de test = 396` | cubical | 0.7486 | 0.3157 | German in-domain is materially harder for cubical |
+| 2026-05-01 | `MLAAD-tiny de train+dev = 2244 -> MLAAD-tiny de test = 396` | Morse-Smale | 0.9154 | 0.1237 | MS retains a large advantage on German as well |
+| 2026-05-01 | `MLAAD-tiny en,de train+dev = 12564 -> MLAAD-tiny en,de test = 2216` | cubical | 0.8885 | 0.1927 | Mixed-language MLAAD still hurts cubical relative to English-only |
+| 2026-05-01 | `MLAAD-tiny en,de train+dev = 12564 -> MLAAD-tiny en,de test = 2216` | Morse-Smale | 0.9717 | 0.0523 | MS remains decisively stronger on the combined set |
+| 2026-05-01 | `MLAAD-tiny en train+dev = 10320 -> ASVspoof2019 LA dev` | cubical | 0.7915 | 0.2647 | Reverse transfer is nontrivial for cubical |
+| 2026-05-01 | `MLAAD-tiny en train+dev = 10320 -> ASVspoof2019 LA dev` | Morse-Smale | 0.3725 | 0.5970 | Reverse transfer collapses for MS; asymmetry is directional, not symmetric |
+
+### MLAAD-Tiny Diagnostic Ablations
+
+These runs freeze the current MLAAD anchors and ask what structure each branch is using on MLAAD itself.
+
+- cubical anchor: `keep_low_gate12`
+- Morse anchor: `keep_low_k4_norm_none`
+
+#### English (`MLAAD-tiny en`)
+
+| Date | MLAAD English diagnostic | AUC | EER | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-05-01 | cubical full reference | 0.8962 | 0.1764 | Full-field cubical anchor on English MLAAD |
+| 2026-05-01 | cubical keep low gate10 | 0.9277 | 0.1418 | Best cubical EER on English MLAAD, tied with drop-low |
+| 2026-05-01 | cubical keep low gate12 | 0.9281 | 0.1566 | Original cubical MLAAD English anchor |
+| 2026-05-01 | cubical drop low | 0.9292 | 0.1418 | Dropping the low band does not hurt MLAAD the way it hurts ASVspoof |
+| 2026-05-01 | cubical drop mid | 0.9169 | 0.1577 | Mid-band removal is somewhat harmful |
+| 2026-05-01 | cubical drop high | 0.9169 | 0.1571 | High-band removal is also mildly harmful |
+| 2026-05-01 | cubical gate off | 0.8829 | 0.2027 | Gate-off hurts cubical strongly on MLAAD |
+| 2026-05-01 | cubical H0 only | 0.8578 | 0.2225 | H0-only is much weaker |
+| 2026-05-01 | cubical H1 only | 0.8500 | 0.2242 | H1-only is also much weaker; the old ASVspoof H1 story does not carry over cleanly |
+| 2026-05-01 | Morse full reference | 0.9875 | 0.0341 | Best broad Morse field on English MLAAD |
+| 2026-05-01 | Morse keep low gate10 | 0.9864 | 0.0357 | Original Morse MLAAD English anchor |
+| 2026-05-01 | Morse keep low gate12 | 0.9833 | 0.0390 | Slightly worse than gate10 |
+| 2026-05-01 | Morse drop low | 0.9853 | 0.0412 | Low-band restriction is not essential for MLAAD Morse success |
+| 2026-05-01 | Morse drop mid | 0.9874 | 0.0313 | Best compact Morse EER among the English band ablations |
+| 2026-05-01 | Morse drop high | 0.9835 | 0.0418 | Still extremely strong |
+| 2026-05-01 | Morse gate off | 0.9888 | 0.0297 | Best Morse English MLAAD result in this diagnostic block |
+| 2026-05-01 | Morse counts+entropy | 0.9657 | 0.0802 | Strong subset, but well below the full signature |
+| 2026-05-01 | Morse basin fractions | 0.9808 | 0.0396 | Strongest compact structural subset |
+| 2026-05-01 | Morse merge sequence | 0.8728 | 0.1797 | Much weaker than the full signature |
+| 2026-05-01 | Morse extrema values | 0.6106 | 0.4198 | Near-useless on English MLAAD |
+
+#### German (`MLAAD-tiny de`, compact)
+
+| Date | MLAAD German diagnostic | AUC | EER | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-05-01 | cubical full reference | 0.7691 | 0.3081 | German is much harder for cubical |
+| 2026-05-01 | cubical keep low gate10 | 0.7526 | 0.3030 | Similar to the full-field anchor |
+| 2026-05-01 | cubical keep low gate12 | 0.7486 | 0.3157 | Slightly worse than gate10 |
+| 2026-05-01 | cubical drop low | 0.7958 | 0.2525 | Again, dropping low helps rather than hurts |
+| 2026-05-01 | cubical gate off | 0.7014 | 0.3384 | Gate-off is especially harmful |
+| 2026-05-01 | Morse full reference | 0.9125 | 0.1263 | Strong German Morse anchor |
+| 2026-05-01 | Morse keep low gate10 | 0.9154 | 0.1237 | Best German Morse EER |
+| 2026-05-01 | Morse keep low gate12 | 0.9015 | 0.1490 | Worse than gate10 |
+| 2026-05-01 | Morse drop low | 0.8811 | 0.1616 | Some degradation, but still much stronger than cubical |
+| 2026-05-01 | Morse gate off | 0.9185 | 0.1389 | Still strong, but not clearly better than gate10 |
+| 2026-05-01 | Morse counts+entropy | 0.8633 | 0.2096 | Weaker subset |
+| 2026-05-01 | Morse basin fractions | 0.9044 | 0.1414 | Strong compact subset here too |
+
+#### English + German (`MLAAD-tiny en,de`, compact)
+
+| Date | MLAAD English+German diagnostic | AUC | EER | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-05-01 | cubical full reference | 0.8680 | 0.2112 | Mixed-language cubical anchor |
+| 2026-05-01 | cubical keep low gate10 | 0.8980 | 0.1742 | Best cubical keep-low variant on the combined set |
+| 2026-05-01 | cubical keep low gate12 | 0.8885 | 0.1927 | Original combined-set cubical anchor |
+| 2026-05-01 | cubical drop low | 0.9144 | 0.1606 | Best cubical combined-set result |
+| 2026-05-01 | cubical gate off | 0.8503 | 0.2283 | Gate-off hurts again |
+| 2026-05-01 | Morse full reference | 0.9758 | 0.0505 | Strong combined-set full signature |
+| 2026-05-01 | Morse keep low gate10 | 0.9717 | 0.0523 | Original combined-set Morse anchor |
+| 2026-05-01 | Morse keep low gate12 | 0.9697 | 0.0578 | Slightly worse than gate10 |
+| 2026-05-01 | Morse drop low | 0.9668 | 0.0609 | Mild degradation only |
+| 2026-05-01 | Morse gate off | 0.9732 | 0.0469 | Best combined-set Morse EER |
+| 2026-05-01 | Morse counts+entropy | 0.9496 | 0.0943 | Useful, but clearly incomplete |
+| 2026-05-01 | Morse basin fractions | 0.9647 | 0.0542 | Best compact Morse subset on the combined set |
+
+English sample-level explanation pass:
+
+- The strongest qualitative pattern is a bonafide English MLAAD sample that every cubical variant still scores as fake, while multiple Morse variants flip it correctly to bonafide with high confidence.
+- On those same cases, `basin_fractions` and `counts_entropy` often preserve most of the Morse advantage, while `extrema_values` frequently collapses toward noise.
+- The sample pass therefore agrees with the aggregate ablation tables: Morse is not winning on raw extrema values, but on broader basin / partition structure that cubical is mostly not exploiting on MLAAD.
+
+### Mixed ASVspoof English + MLAAD English Training
+
+These runs test whether a balanced mixed source set produces a more useful compromise representation.
+
+Training conditions were matched in total size:
+
+- `ASV-only`: balanced `ASVspoof2019 LA train`, `2580` bona fide + `2580` spoof
+- `MLAAD-only`: balanced `MLAAD-tiny en train+dev`, `2580` bona fide + `2580` spoof
+- `Mixed`: `1290` per label from ASV + `1290` per label from MLAAD, total `5160`
+
+Eval targets were held fixed across all three training conditions:
+
+- `ASVspoof2019 LA dev`
+- `ASVspoof2021 LA`
+- `MLAAD-tiny en` held-out test
+
+#### Cubical (`keep_low_gate12`)
+
+| Date | Train source | ASV2019 dev | ASV2021 LA | MLAAD English | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-02 | ASV-only | `AUC 0.9763`, `EER 0.0737` | `AUC 0.8368`, `EER 0.2111` | `AUC 0.4909`, `EER 0.5044` | Best pure ASV cubical point; collapses on MLAAD |
+| 2026-05-02 | MLAAD-only | `AUC 0.7721`, `EER 0.2721` | `AUC 0.7063`, `EER 0.3452` | `AUC 0.9155`, `EER 0.1632` | Strong MLAAD fit, but weak back-transfer to ASV |
+| 2026-05-02 | Mixed | `AUC 0.9611`, `EER 0.1000` | `AUC 0.8355`, `EER 0.2251` | `AUC 0.8921`, `EER 0.1802` | A compromise point: rescues MLAAD strongly while only modestly degrading ASV |
+
+#### Morse-Smale (`keep_low_k4_norm_none`)
+
+| Date | Train source | ASV2019 dev | ASV2021 LA | MLAAD English | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-02 | ASV-only | `AUC 0.8929`, `EER 0.1903` | `AUC 0.8390`, `EER 0.2041` | `AUC 0.6006`, `EER 0.4286` | Best pure ASV Morse point in this matrix |
+| 2026-05-02 | MLAAD-only | `AUC 0.3734`, `EER 0.6013` | `AUC 0.3682`, `EER 0.6331` | `AUC 0.9849`, `EER 0.0429` | Strongest pure MLAAD fit, but catastrophic reverse transfer |
+| 2026-05-02 | Mixed | `AUC 0.8659`, `EER 0.2171` | `AUC 0.8423`, `EER 0.2009` | `AUC 0.9757`, `EER 0.0681` | Best balanced Morse point; materially reduces the ASV / MLAAD asymmetry |
+
 ## Current Read
 
 - TDA-derived features contain strong signal for this task, and the cubical branch now performs at a competitive level on the current benchmark setup.
@@ -244,17 +395,27 @@ These runs use the matched topopy Morse-Smale family trained on the balanced 201
 - The topology-only neural pass shows that the current topological vectors still have nonlinear headroom. Both neural heads beat the linear topology baseline on 2019 dev, 2021 LA transfer, and bounded DF transfer.
 - The staged MLP supports the robust-core-first hypothesis at the representation level. Its transfer ablations depend most on the low-band `H1` core, while the flat MLP and linear baseline lean more on the broader full-field auxiliary block.
 - The staged MLP is the best topology-only neural head tested so far, but it has not yet beaten the strongest tuned classical cubical transfer branch. For example, the best classical 2021 LA transfer result remains keep-low + gate12 by AUC (`0.8329`) and keep-low H1 + `C=2` by EER (`0.2100`), both ahead of the staged MLP (`0.8275`, `0.2240`).
+- The Takens branch shows real but clearly secondary signal. Low-band waveform embeddings beat low-band envelopes, but even the best bounded Takens result (`AUC 0.687`, `EER 0.364`) remains far behind both cubical and Morse-Smale.
+- MLAAD changes the structure story substantially. On MLAAD-tiny English, cubical remains viable (`AUC 0.9281`, `EER 0.1566`), but Morse-Smale is dramatically better (`AUC 0.9864`, `EER 0.0357`), and that margin persists on German and English+German.
+- The MLAAD diagnostic ablations suggest cubical and Morse are exploiting genuinely different structures. On MLAAD, cubical does not need the classic ASVspoof low-band keep recipe: `drop_low` is as good as or better than `keep_low`, and `gate_off` consistently hurts. By contrast, Morse stays strong under broad-field settings, and `gate_off` is often neutral or helpful.
+- Within the Morse signature, `basin_fractions` is the strongest compact subset on MLAAD, `counts_entropy` is useful but incomplete, `merge_sequence` is much weaker, and `extrema_values` are close to noise. So the current Morse advantage on MLAAD appears to come from basin / partition geometry rather than raw extrema values.
+- The MLAAD sample-level explanation pass matches the aggregate read: there are bona fide English MLAAD samples that every cubical variant still calls fake while multiple Morse variants classify them correctly with high confidence.
+- Mixed-source training reveals a useful asymmetry reduction pattern. For cubical, mixed ASV+MLAAD training mainly creates a compromise model: it rescues MLAAD strongly while only modestly degrading ASV, but it does not beat the source-specialized model on either domain. For Morse, mixed training is more interesting: it dramatically reduces the `MLAAD-only -> ASV` collapse and gives the best `ASV2021 LA` result in the mixed-source matrix (`AUC 0.8423`, `EER 0.2009`).
+- Best current “balanced robustness” point from the mixed-source matrix is mixed-source Morse-Smale: it remains strong on MLAAD English (`AUC 0.9757`, `EER 0.0681`) while becoming much less brittle on ASV2019 dev (`AUC 0.8659`, `EER 0.2171`) and slightly improving over ASV-only Morse on `ASV2021 LA`.
 - Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
 - Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
 - Best Morse-Smale bounded holdout result so far: keep-low, `graph_max_neighbors=4`, `normalization=None`, `AUC 0.8723`, `EER 0.2094` (`2019 train n=1000 -> balanced 2019 dev n=5000`).
-- Best Morse-Smale `2021 LA` transfer result so far: keep-low, `AUC 0.8381`, `EER 0.2080`.
+- Best Morse-Smale `2021 LA` transfer result so far: mixed-source English training, `AUC 0.8423`, `EER 0.2009`; best pure `ASV2019 -> 2021 LA` Morse result remains keep-low, `AUC 0.8381`, `EER 0.2080`.
+- Best Morse-Smale MLAAD English in-domain result so far: full-reference / gate-off family on MLAAD English, with the strongest measured point at `gate_off` in the diagnostic block (`AUC 0.9888`, `EER 0.0297`).
+- Best mixed-source result so far: Morse-Smale mixed-source training on `ASV2021 LA` (`AUC 0.8423`, `EER 0.2009`) and strong retained MLAAD English performance (`AUC 0.9757`, `EER 0.0681`).
 - Best topology-only neural result so far: staged MLP, `2019 dev AUC 0.9751`, `EER 0.0784`; `2021 LA transfer AUC 0.8275`, `EER 0.2240`; bounded `2021 DF transfer AUC 0.7897`, `EER 0.2730`.
 - Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
 
 ## Next Runs
 
-1. Promote the Morse-Smale keep-low winner (`k=4`, `normalization=None`) onto the `2021 LA` and bounded `2021 DF` transfer protocols to test whether the holdout improvement survives the same domain shifts.
-2. If the winner keeps its transfer behavior, do one small Morse-Smale follow-up over signature-content knobs (`top_k_basins`, `include_extrema_values`) rather than another broad graph sweep.
-3. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
-4. Repeat the topology-only neural comparison across 2-3 train seeds and, if runtime permits, a larger 2019 train budget, so the staged-vs-flat result is not resting on one `n=1000` seed.
-5. Treat the H2 question as provisionally closed for this 2-D cubical pipeline unless a future 3-D / multi-channel field representation changes the topological dimensionality.
+1. Persist the scratch MLAAD and mixed-source artifacts from `/tmp` into a reproducible local results location, then update any downstream tables/figures from those saved copies rather than the transient scratch paths.
+2. Extend the mixed-source matrix to MLAAD German and MLAAD English+German held-out targets so the current English-only mixed-source conclusion is tested against the same language-shift axes that made the original MLAAD transfer story asymmetric.
+3. Run one focused mixed-source follow-up for Morse-Smale with the strongest MLAAD diagnostic structural subset (`basin_fractions`) to test whether the mixed-source gain is still present when the representation is simplified.
+4. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
+5. Repeat the topology-only neural comparison across 2-3 train seeds and, if runtime permits, a larger 2019 train budget, so the staged-vs-flat result is not resting on one `n=1000` seed.
+6. Treat the H2 question as provisionally closed for this 2-D cubical pipeline unless a future 3-D / multi-channel field representation changes the topological dimensionality.
