@@ -71,9 +71,48 @@ python scripts/verify_setup.py
 
 ## Dataset
 
-This project uses the [ASVspoof 2019 Logical Access (LA) partition](https://www.asvspoof.org/index2019.html). Download and extract it to `data/raw/ASVspoof2019_LA/`.
+The repo now includes a bootstrap script for dataset layout and ingestion:
 
-The expected layout is:
+```bash
+python scripts/bootstrap_datasets.py --dataset layout
+```
+
+Default behavior keeps managed data inside the clone:
+
+```text
+data/raw/
+data/results/
+data/protocols/
+```
+
+If you want to store the heavy data elsewhere, point the script at another
+storage root and it will wire the repo paths up as symlinks automatically:
+
+```bash
+python scripts/bootstrap_datasets.py \
+  --storage-root /path/to/tda-audio-deepfake-storage \
+  --dataset all
+```
+
+If you later move the datasets again, re-run the script with
+`--migrate-existing` to copy the currently managed `raw`, `results`, and
+`protocols` trees into the new storage root before cutover:
+
+```bash
+python scripts/bootstrap_datasets.py \
+  --storage-root ~/tda-audio-deepfake-storage \
+  --migrate-existing \
+  --dataset layout
+```
+
+For ASVspoof, the script can download and rebuild the repo-specific derived
+protocols directly:
+
+```bash
+python scripts/bootstrap_datasets.py --dataset asvspoof
+```
+
+The canonical ASVspoof 2019 LA layout expected by the pipeline is:
 
 ```text
 data/raw/ASVspoof2019_LA/
@@ -88,6 +127,11 @@ explicit `--train-*` and `--eval-*` paths at runtime. For ASVspoof 2021 LA,
 you can point `--eval-protocol` directly at `keys/LA/CM/trial_metadata.txt`
 and `--eval-audio-dir` at the corresponding audio directory; the loader now
 detects `bonafide`/`spoof` labels without assuming a fixed column position.
+
+The bootstrap script also supports:
+- `--dataset mlaad_tiny`
+- `--dataset in_the_wild`
+- `--dataset all`
 
 ## Pipeline
 

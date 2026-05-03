@@ -3,7 +3,12 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-EVAL_PROTOCOL="${EVAL_PROTOCOL:-$ROOT_DIR/data/raw/ASVspoof2021_DF_eval/ASVspoof2021.DF.cm.eval.trl.txt}"
+DEFAULT_DF_PROTOCOL="$ROOT_DIR/data/raw/ASVspoof2021_DF_eval/derived/available_trial_metadata.txt"
+if [[ ! -f "$DEFAULT_DF_PROTOCOL" ]]; then
+  DEFAULT_DF_PROTOCOL="$ROOT_DIR/data/raw/ASVspoof2021_DF_keys/keys/DF/CM/trial_metadata.txt"
+fi
+
+EVAL_PROTOCOL="${EVAL_PROTOCOL:-$DEFAULT_DF_PROTOCOL}"
 EVAL_AUDIO_DIR="${EVAL_AUDIO_DIR:-$ROOT_DIR/data/raw/ASVspoof2021_DF_eval/flac}"
 RESULTS_ROOT="${RESULTS_ROOT:-$ROOT_DIR/data/results}"
 RUNTIME_ROOT="${RUNTIME_ROOT:-/tmp/${USER}/tda_deepfake_runtime}"

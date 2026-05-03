@@ -5,7 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TRAIN_PROTOCOL="${TRAIN_PROTOCOL:-$ROOT_DIR/data/raw/ASVspoof2019_LA/derived/ASVspoof2019.LA.cm.train.all_bonafide_balanced.seed42.txt}"
 TRAIN_AUDIO_DIR="${TRAIN_AUDIO_DIR:-$ROOT_DIR/data/raw/ASVspoof2019_LA/ASVspoof2019_LA_train/flac}"
-EVAL_PROTOCOL="${EVAL_PROTOCOL:-$ROOT_DIR/data/raw/ASVspoof2021_DF_keys/keys/DF/CM/trial_metadata.txt}"
+DEFAULT_DF_PROTOCOL="$ROOT_DIR/data/raw/ASVspoof2021_DF_eval/derived/available_trial_metadata.txt"
+if [[ ! -f "$DEFAULT_DF_PROTOCOL" ]]; then
+  DEFAULT_DF_PROTOCOL="$ROOT_DIR/data/raw/ASVspoof2021_DF_keys/keys/DF/CM/trial_metadata.txt"
+fi
+
+EVAL_PROTOCOL="${EVAL_PROTOCOL:-$DEFAULT_DF_PROTOCOL}"
 EVAL_AUDIO_DIR="${EVAL_AUDIO_DIR:-$ROOT_DIR/data/raw/ASVspoof2021_DF_eval/flac}"
 RESULTS_ROOT="${RESULTS_ROOT:-$ROOT_DIR/data/results}"
 RUNTIME_ROOT="${RUNTIME_ROOT:-/tmp/${USER}/tda_deepfake_runtime}"

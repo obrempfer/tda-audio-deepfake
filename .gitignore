@@ -48,6 +48,7 @@ cover/
 .env
 .envrc
 .venv
+.venv_lab/
 env/
 venv/
 ENV/
@@ -78,17 +79,17 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Project-specific: raw dataset (large — download separately from ASVspoof)
-data/raw/*/
-!data/raw/.gitkeep
+# Project-specific managed storage. These paths may be real directories or
+# symlinks created by scripts/bootstrap_datasets.py.
+data/raw
+data/results
+data/protocols
+data/*_home_backup_*
+lab_tmp
 
 # Extracted feature matrices (can be regenerated)
 data/features/*/
 !data/features/.gitkeep
-
-# Results / outputs (can be regenerated)
-data/results/*/
-!data/results/.gitkeep
 
 # Model checkpoints / serialized classifiers
 models/
