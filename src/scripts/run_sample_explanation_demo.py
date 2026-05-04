@@ -97,13 +97,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results-root",
         type=Path,
-        default=Path(f"/tmp/{user}/tda_results"),
+        default=REPO_ROOT / "data" / "results",
         help="Results root that holds the 2021 internal-split models.",
     )
     parser.add_argument(
         "--protocol-root",
         type=Path,
-        default=Path(f"/tmp/{user}/tda_protocols/asvspoof2021_la_internal_seed42"),
+        default=REPO_ROOT / "data" / "protocols" / "asvspoof2021_la_internal_seed42",
         help="Directory that holds the internal 2021 LA split files.",
     )
     parser.add_argument(
