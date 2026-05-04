@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-root",
         type=Path,
-        default=Path(f"/tmp/{user}/tda_sample_explanation_cache"),
+        default=Path(f"/tmp/{user}/tda_deepfake_runtime/sample_explanation_cache"),
         help="Shared feature-cache root for this demo.",
     )
     parser.add_argument(

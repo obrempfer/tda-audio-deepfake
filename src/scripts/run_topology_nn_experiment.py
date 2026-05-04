@@ -65,7 +65,12 @@ def parse_args() -> argparse.Namespace:
         help="Extra eval dataset in the form name=protocol_path::audio_dir[::max_samples]",
     )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--cache-root", type=Path, default=Path("/tmp") / "topology_nn_cache")
+    user = os.environ.get("USER", "user")
+    parser.add_argument(
+        "--cache-root",
+        type=Path,
+        default=Path(f"/tmp/{user}/tda_deepfake_runtime/topology_nn_cache"),
+    )
     parser.add_argument("--max-train-samples", type=int, default=1000)
     parser.add_argument("--max-val-samples", type=int, default=5000)
     parser.add_argument("--max-eval-samples", type=int, default=None)
