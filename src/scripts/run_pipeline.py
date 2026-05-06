@@ -21,6 +21,7 @@ Re-runs with the same --method and --n-bins skip extraction entirely.
 """
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -62,6 +63,12 @@ from tda_deepfake.config import (
     load_config_from_yaml,
 )
 
+_DEFAULT_CLASSIFIER_QUEUE_ROOT = (
+    Path(os.environ["CLASSIFIER_QUEUE_ROOT"])
+    if os.environ.get("CLASSIFIER_QUEUE_ROOT")
+    else None
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TDA Audio Deepfake Detection Pipeline")
@@ -101,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--method", default=None,
                         choices=["persistence_image", "landscape", "statistics"],
                         help="Vectorization method")
-    parser.add_argument("--model", default=None, choices=["svm", "logistic"],
+    parser.add_argument("--model", default=None, choices=["svm", "logistic", "linear_svm"],
                         help="Classifier type")
     parser.add_argument("--n-bins", type=int, default=None,
                         help="Persistence image grid resolution (n_bins x n_bins)")
@@ -117,6 +124,16 @@ def parse_args() -> argparse.Namespace:
                         help="Print extraction progress every N completed samples.")
     parser.add_argument("--config", type=Path, default=None,
                         help="Optional YAML config file to override defaults")
+    parser.add_argument(
+        "--classifier-queue-root",
+        type=Path,
+        default=_DEFAULT_CLASSIFIER_QUEUE_ROOT,
+        help=(
+            "Optional classifier queue root. When set in train/eval mode, the pipeline writes "
+            "a cached feature bundle plus a ready job and returns immediately instead of "
+            "training the classifier inline."
+        ),
+    )
     parser.add_argument("--ablation", action="store_true",
                         help="Run dimensional ablation on flagged samples (not yet wired)")
     return parser.parse_args()
@@ -196,6 +213,19 @@ def _atomic_save_bundle(path: Path, arrays: list[np.ndarray], computed_max_dim: 
         tmp_path = Path(tmp.name)
     try:
         np.savez_compressed(tmp_path, **payload)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
+    """Atomically write one JSON payload."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False, mode="w", encoding="utf-8") as tmp:
+        json.dump(payload, tmp, indent=2)
+        tmp.write("\n")
+        tmp_path = Path(tmp.name)
+    try:
         os.replace(tmp_path, path)
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -786,6 +816,68 @@ def _extract_split(
     return np.stack(vectors), labels
 
 
+def _write_classifier_bundle(
+    feature_dir: Path,
+    *,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_eval: np.ndarray,
+    y_eval: np.ndarray,
+    metadata: dict[str, object],
+) -> None:
+    """Write one standalone classifier bundle for background training."""
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    np.save(feature_dir / "X_train.npy", X_train)
+    np.save(feature_dir / "y_train.npy", y_train)
+    np.save(feature_dir / "X_eval.npy", X_eval)
+    np.save(feature_dir / "y_eval.npy", y_eval)
+    _atomic_write_json(feature_dir / "metadata.json", metadata)
+
+
+def _enqueue_classifier_job(
+    *,
+    queue_root: Path,
+    run_id: str,
+    feature_dir: Path,
+    result_dir: Path,
+    classifier: str,
+) -> Path:
+    """Write one classifier job into queue_root/ready."""
+    ready_dir = queue_root / "ready"
+    claimed_dir = queue_root / "claimed"
+    done_dir = queue_root / "done"
+    failed_dir = queue_root / "failed"
+    for path in (ready_dir, claimed_dir, done_dir, failed_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    params: dict[str, object] = {
+        "kernel": ClassifierConfig.SVM_KERNEL,
+        "C": ClassifierConfig.SVM_C,
+        "gamma": ClassifierConfig.SVM_GAMMA,
+        "probability": ClassifierConfig.SVM_PROBABILITY,
+        "cache_size": ClassifierConfig.SVM_CACHE_SIZE,
+        "random_state": ClassifierConfig.RANDOM_STATE,
+        "max_iter": 1000,
+    }
+    job_payload = {
+        "run_id": run_id,
+        "feature_dir": str(feature_dir),
+        "result_dir": str(result_dir),
+        "classifier": (
+            "sklearn_svc_rbf"
+            if classifier == "svm"
+            else "sklearn_logistic"
+            if classifier == "logistic"
+            else "sklearn_linear_svm"
+        ),
+        "params": params,
+        "created_at": datetime.now().isoformat(),
+    }
+    ready_path = ready_dir / f"{run_id}.ready.json"
+    _atomic_write_json(ready_path, job_payload)
+    return ready_path
+
+
 def _feature_cache_key(method: str, n_bins: int, max_points: int) -> str:
     """Build a stable cache key that changes when feature geometry changes."""
     signature = {
@@ -1024,12 +1116,73 @@ def main() -> None:
             progress_every=args.progress_every,
         )
 
+        if args.load_model is None and args.classifier_queue_root is not None:
+            feature_dir = args.out_dir / "classifier_bundle"
+            bundle_metadata = {
+                "method": method,
+                "model": model,
+                "n_bins": n_bins,
+                "max_points": max_points,
+                "max_train_samples": max_train_samples,
+                "max_eval_samples": args.max_eval_samples,
+                "train_cache_dir": str(train_cache_dir),
+                "eval_cache_dir": str(eval_cache_dir),
+                "train_protocol": str(args.train_protocol),
+                "train_audio_dir": str(args.train_audio_dir),
+                "eval_protocol": str(args.eval_protocol),
+                "eval_audio_dir": str(args.eval_audio_dir),
+                "n_train": int(len(y_train)),
+                "n_eval": int(len(y_eval)),
+                "n_features": int(X_train.shape[1]),
+            }
+            print(f"Writing classifier bundle to {feature_dir}...")
+            _write_classifier_bundle(
+                feature_dir,
+                X_train=X_train,
+                y_train=y_train,
+                X_eval=X_eval,
+                y_eval=y_eval,
+                metadata=bundle_metadata,
+            )
+            ready_path = _enqueue_classifier_job(
+                queue_root=args.classifier_queue_root,
+                run_id=args.out_dir.name,
+                feature_dir=feature_dir,
+                result_dir=args.out_dir,
+                classifier=model,
+            )
+            queue_summary = {
+                "status": "queued",
+                "ready_job": str(ready_path),
+                "classifier_queue_root": str(args.classifier_queue_root),
+                "feature_dir": str(feature_dir),
+                "result_dir": str(args.out_dir),
+                "config": {
+                    "method": method,
+                    "model": model,
+                    "n_bins": n_bins,
+                    "max_points": max_points,
+                    "max_train_samples": max_train_samples,
+                    "max_eval_samples": args.max_eval_samples,
+                    "train_cache_dir": str(train_cache_dir),
+                    "eval_cache_dir": str(eval_cache_dir),
+                },
+            }
+            _atomic_write_json(args.out_dir / "classifier_job.json", queue_summary)
+            print(f"Queued classifier job at {ready_path}")
+            print("Skipping inline classifier training because --classifier-queue-root was set.")
+            print(f"Bundle and queue metadata saved to {args.out_dir}")
+            return
+
         if args.load_model is None:
             print("Training classifier...")
             clf = Classifier(
                 model=model,
                 svm_kernel=ClassifierConfig.SVM_KERNEL,
                 svm_c=ClassifierConfig.SVM_C,
+                svm_gamma=ClassifierConfig.SVM_GAMMA,
+                svm_probability=ClassifierConfig.SVM_PROBABILITY,
+                svm_cache_size=ClassifierConfig.SVM_CACHE_SIZE,
                 scale_features=ClassifierConfig.SCALE_FEATURES,
                 random_state=ClassifierConfig.RANDOM_STATE,
             )
@@ -1041,6 +1194,7 @@ def main() -> None:
 
         print("Evaluating on eval set...")
         eval_results = clf.evaluate(X_eval, y_eval)
+        y_score = clf.positive_scores(X_eval)
         print(f"Eval AUC: {eval_results['auc']:.4f}")
         print(f"Eval EER: {eval_results['eer']:.4f}")
         print(eval_results["report"])
@@ -1068,6 +1222,8 @@ def main() -> None:
             json.dump(metrics, f, indent=2)
         with open(args.out_dir / "eval_report.txt", "w") as f:
             f.write(eval_results["report"])
+        np.save(args.out_dir / "eval_scores.npy", np.asarray(y_score, dtype=np.float64))
+        np.save(args.out_dir / "eval_labels.npy", np.asarray(y_eval, dtype=np.int64))
 
         print(f"Results saved to {args.out_dir}")
         return
@@ -1099,6 +1255,9 @@ def main() -> None:
         model=model,
         svm_kernel=ClassifierConfig.SVM_KERNEL,
         svm_c=ClassifierConfig.SVM_C,
+        svm_gamma=ClassifierConfig.SVM_GAMMA,
+        svm_probability=ClassifierConfig.SVM_PROBABILITY,
+        svm_cache_size=ClassifierConfig.SVM_CACHE_SIZE,
         scale_features=ClassifierConfig.SCALE_FEATURES,
         random_state=ClassifierConfig.RANDOM_STATE,
     )

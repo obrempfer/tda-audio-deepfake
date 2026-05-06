@@ -4,6 +4,7 @@ Uses the 'statistics' vectorization method so it runs with only
 numpy/ripser/scikit-learn installed (no persim or giotto-tda required).
 """
 
+import json
 import wave
 
 import numpy as np
@@ -11,6 +12,7 @@ import pytest
 
 from scripts.run_pipeline import (
     _diagram_cache_key,
+    _enqueue_classifier_job,
     _extract_split,
     _feature_cache_key,
     _resolve_worker_count,
@@ -24,6 +26,7 @@ from tda_deepfake.config import (
     TopologyConfig,
     VectorizationConfig,
     apply_runtime_config,
+    ClassifierConfig,
     export_runtime_config,
 )
 from tda_deepfake.features.extraction import (
@@ -94,6 +97,42 @@ def test_full_pipeline_smoke():
     assert "report" in metrics
     assert 0.0 <= metrics["auc"] <= 1.0
     assert 0.0 <= metrics["eer"] <= 1.0
+
+
+def test_svm_positive_scores_use_decision_function():
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((12, 8))
+    y = np.array([0, 1] * 6)
+
+    clf = Classifier(model="svm")
+    clf.fit(X, y)
+
+    expected = clf.pipeline.decision_function(X)
+    actual = clf.positive_scores(X)
+    np.testing.assert_allclose(actual, expected)
+
+
+def test_enqueue_classifier_job_writes_ready_payload(tmp_path):
+    queue_root = tmp_path / "queue"
+    feature_dir = tmp_path / "features"
+    result_dir = tmp_path / "results"
+    feature_dir.mkdir()
+    result_dir.mkdir()
+
+    ready_path = _enqueue_classifier_job(
+        queue_root=queue_root,
+        run_id="demo_run",
+        feature_dir=feature_dir,
+        result_dir=result_dir,
+        classifier="svm",
+    )
+
+    assert ready_path.exists()
+    payload = json.loads(ready_path.read_text(encoding="utf-8"))
+    assert payload["run_id"] == "demo_run"
+    assert payload["classifier"] == "sklearn_svc_rbf"
+    assert payload["params"]["probability"] is False
+    assert payload["params"]["cache_size"] == ClassifierConfig.SVM_CACHE_SIZE
 
 
 def test_full_cubical_pipeline_smoke():

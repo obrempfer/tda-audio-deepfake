@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union
 
 import joblib
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC, SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -36,9 +36,12 @@ class Classifier:
 
     def __init__(
         self,
-        model: Literal["svm", "logistic"] = ClassifierConfig.MODEL,
+        model: Literal["svm", "logistic", "linear_svm"] = ClassifierConfig.MODEL,
         svm_kernel: str = ClassifierConfig.SVM_KERNEL,
         svm_c: float = ClassifierConfig.SVM_C,
+        svm_gamma: str | float = ClassifierConfig.SVM_GAMMA,
+        svm_probability: bool = ClassifierConfig.SVM_PROBABILITY,
+        svm_cache_size: float = ClassifierConfig.SVM_CACHE_SIZE,
         scale_features: bool = ClassifierConfig.SCALE_FEATURES,
         random_state: int = ClassifierConfig.RANDOM_STATE,
     ) -> None:
@@ -49,7 +52,14 @@ class Classifier:
             clf = SVC(
                 kernel=svm_kernel,
                 C=svm_c,
-                probability=True,
+                gamma=svm_gamma,
+                probability=svm_probability,
+                cache_size=svm_cache_size,
+                random_state=random_state,
+            )
+        elif model == "linear_svm":
+            clf = LinearSVC(
+                C=svm_c,
                 random_state=random_state,
             )
         elif model == "logistic":
@@ -99,7 +109,20 @@ class Classifier:
         Returns:
             Probability array of shape (n_samples, 2). Column 1 = P(fake).
         """
-        return self.pipeline.predict_proba(X)
+        if hasattr(self.pipeline, "predict_proba"):
+            return self.pipeline.predict_proba(X)
+
+        scores = self.positive_scores(X)
+        prob_fake = 1.0 / (1.0 + np.exp(-scores))
+        return np.column_stack([1.0 - prob_fake, prob_fake])
+
+    def positive_scores(self, X: npt.NDArray) -> npt.NDArray:
+        """Return monotonic positive-class scores for ranking metrics."""
+        if hasattr(self.pipeline, "decision_function"):
+            return np.asarray(self.pipeline.decision_function(X), dtype=np.float64)
+        if hasattr(self.pipeline, "predict_proba"):
+            return self.pipeline.predict_proba(X)[:, 1]
+        raise AttributeError("Classifier pipeline exposes neither predict_proba nor decision_function")
 
     def cross_validate(
         self,
@@ -126,11 +149,18 @@ class Classifier:
             pipeline = clone(self.pipeline)
             pipeline.fit(X[train_idx], y[train_idx])
             y_pred = pipeline.predict(X[test_idx])
-            y_proba = pipeline.predict_proba(X[test_idx])[:, 1]
+            if hasattr(pipeline, "decision_function"):
+                y_score = np.asarray(pipeline.decision_function(X[test_idx]), dtype=np.float64)
+            elif hasattr(pipeline, "predict_proba"):
+                y_score = pipeline.predict_proba(X[test_idx])[:, 1]
+            else:
+                raise AttributeError(
+                    "Cross-validation pipeline exposes neither predict_proba nor decision_function"
+                )
 
             acc_scores.append(accuracy_score(y[test_idx], y_pred))
-            auc_scores.append(roc_auc_score(y[test_idx], y_proba))
-            eer_scores.append(_compute_eer(y[test_idx], y_proba))
+            auc_scores.append(roc_auc_score(y[test_idx], y_score))
+            eer_scores.append(_compute_eer(y[test_idx], y_score))
 
         acc = np.array(acc_scores, dtype=np.float64)
         auc = np.array(auc_scores, dtype=np.float64)
@@ -155,11 +185,11 @@ class Classifier:
             Dict with 'report' (sklearn classification report string) and 'auc'.
         """
         y_pred = self.predict(X)
-        y_proba = self.predict_proba(X)[:, 1]
+        y_score = self.positive_scores(X)
         return {
             "report": classification_report(y, y_pred, target_names=["real", "fake"]),
-            "auc": roc_auc_score(y, y_proba),
-            "eer": _compute_eer(y, y_proba),
+            "auc": roc_auc_score(y, y_score),
+            "eer": _compute_eer(y, y_score),
         }
 
     def save(self, path: Union[str, Path]) -> None:

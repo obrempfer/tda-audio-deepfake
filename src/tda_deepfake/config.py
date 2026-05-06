@@ -230,9 +230,12 @@ class ClassifierConfig:
     """Classifier training parameters.
 
     Attributes:
-        MODEL: Classifier type ('svm' or 'logistic').
+        MODEL: Classifier type ('svm', 'linear_svm', or 'logistic').
         SVM_KERNEL: SVM kernel type.
         SVM_C: SVM regularization parameter.
+        SVM_GAMMA: SVM gamma parameter ('scale' by default).
+        SVM_PROBABILITY: Whether to enable libsvm probability calibration.
+        SVM_CACHE_SIZE: Cache size in MB for libsvm.
         SCALE_FEATURES: Whether to apply StandardScaler before the classifier.
         CV_FOLDS: Number of cross-validation folds.
         RANDOM_STATE: Random seed for reproducibility.
@@ -240,6 +243,9 @@ class ClassifierConfig:
     MODEL: str = "svm"
     SVM_KERNEL: str = "rbf"
     SVM_C: float = 1.0
+    SVM_GAMMA: str = "scale"
+    SVM_PROBABILITY: bool = False
+    SVM_CACHE_SIZE: float = 8000.0
     SCALE_FEATURES: bool = True
     CV_FOLDS: int = 5
     RANDOM_STATE: int = 42
