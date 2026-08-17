@@ -5,7 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tda-deepfake"
 version = "0.1.0"
+description = "Topological audio deepfake detection with persistent homology and Morse-Smale complexes"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+keywords = [
+    "audio-deepfake-detection",
+    "persistent-homology",
+    "morse-smale",
+    "topological-data-analysis",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/obrempfer/tda-audio-deepfake"
+Documentation = "https://github.com/obrempfer/tda-audio-deepfake#readme"
 
 [tool.setuptools.packages.find]
 where = ["src"]

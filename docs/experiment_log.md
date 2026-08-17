@@ -4,15 +4,30 @@ This file is the running record for benchmark setup, implementation changes that
 
 ## Environment and Dataset
 
-- Dataset: ASVspoof 2019 Logical Access (LA)
-- Canonical local dataset root: `data/raw/ASVspoof2019_LA/`
-- Transfer/eval dataset root: `data/raw/ASVspoof2021_LA/`
-- Derived balanced-train protocol:
-  `data/raw/ASVspoof2019_LA/derived/ASVspoof2019.LA.cm.train.all_bonafide_balanced.seed42.txt`
-- Balanced protocol construction:
-  all `2580` bonafide train utterances + `2580` spoof train utterances sampled with seed `42`
-- Recent DF transfer smoke tests were run on `bg16` from the official ASVspoof 2021 DF keys plus the `ASVspoof2021_DF_eval_part00.tar.gz` audio archive, materialized into balanced `/tmp` subsets because the lab home filesystem hit quota during full extraction.
-- Recent MLAAD-tiny experiments were also staged under `bg16` scratch (`/tmp/obrempfer/tda_protocols/` and `/tmp/obrempfer/tda_results*`) because the home filesystem is quota-bound.
+- Canonical project paths are `data/raw`, `data/protocols`, and
+  `data/results`. On the lab machines these are symlinks into durable
+  home-backed storage under `~/tda-audio-deepfake-storage/data`.
+- Disposable feature, topology-neural, plotting, and package caches live under
+  `/scratch/$USER/tda_deepfake_runtime` (or the compatible
+  `/tmp/$USER/tda_deepfake_runtime` path). Scratch is never treated as the
+  canonical result store.
+- ASVspoof 2019 LA balanced train:
+  `2580` bona fide + `2580` spoof, sampled with seed `42`
+  (`n=5160`). The canonical derived protocol is
+  `data/raw/ASVspoof2019_LA/derived/ASVspoof2019.LA.cm.train.all_bonafide_balanced.seed42.txt`.
+- ASVspoof 2019 LA dev contains `24844` files. ASVspoof 2021 LA full eval
+  contains `181566` files.
+- ASVspoof 2021 DF smoke/follow-up runs use the official keys and a balanced
+  `part00` materialization capped at `n=5000`.
+- MLAAD-tiny runs use fixed English, German, and English+German derived
+  protocols.
+- Full MLAAD binary runs pair MLAAD synthetic speech with M-AILABS bona fide
+  speech and use fixed, label/language-balanced 70/15/15 splits:
+  - English: train `84000`, dev `18000`, test `18000`
+  - German: train `30800`, dev `6600`, test `6600`
+  - English+German: train `114800`, dev `24600`, test `24600`
+- In-the-Wild is used as a third-family held-out target with `31779` files
+  (`19963` bona fide, `11816` spoof).
 
 ## Implementation Notes That Affect Results
 
@@ -35,6 +50,21 @@ This file is the running record for benchmark setup, implementation changes that
 - `2026-05-01`: added a Takens / time-delay embedding branch over scalar audio signals, with configurable signal construction (`low_wave`, `low_env`, etc.), delay embedding, PH on the induced point cloud, and the same downstream vectorization/classifier path used elsewhere.
 - `2026-05-01`: added MLAAD subset materialization and internal-diagnostic tooling, including Morse-Smale feature-subset masking (`counts_entropy`, `basin_fractions`, `merge_sequence`, `extrema_values`) so cubical and Morse can be compared under matched MLAAD ablations.
 - `2026-05-02`: added balanced mixed-source protocol generation for ASVspoof 2019 LA + MLAAD English, with equal source contribution and per-source class balance, so source-mixing effects can be tested without quietly changing total train size.
+- `2026-05-03`: added managed dataset bootstrap/storage support. Durable
+  raw data, protocols, and results can live outside the clone while repo-local
+  paths remain stable through symlinks.
+- `2026-05-04`: added full MLAAD + M-AILABS binary protocol builders and
+  fixed English, German, and English+German 70/15/15 splits.
+- `2026-05-05`: changed RBF SVC defaults to `probability=False`,
+  `gamma="scale"`, and `cache_size=8000`; ranking metrics now use
+  `decision_function` before falling back to probabilities or labels.
+- `2026-05-05`: added a non-blocking classifier queue. Pipeline runs can
+  persist feature bundles and enqueue atomic `ready -> claimed -> done/failed`
+  jobs while separate workers train classifiers and write the normal model and
+  evaluation artifacts.
+- `2026-05-06`: added full-scale mixed-source, weighted-mixture,
+  compact-Morse diagnostic, and score-level fusion launchers for distributed
+  multi-machine execution with machine-local caches.
 
 ## Results
 
@@ -369,53 +399,163 @@ Eval targets were held fixed across all three training conditions:
 | 2026-05-02 | MLAAD-only | `AUC 0.3734`, `EER 0.6013` | `AUC 0.3682`, `EER 0.6331` | `AUC 0.9849`, `EER 0.0429` | Strongest pure MLAAD fit, but catastrophic reverse transfer |
 | 2026-05-02 | Mixed | `AUC 0.8659`, `EER 0.2171` | `AUC 0.8423`, `EER 0.2009` | `AUC 0.9757`, `EER 0.0681` | Best balanced Morse point; materially reduces the ASV / MLAAD asymmetry |
 
+### Full MLAAD Binary Scale-Up
+
+These fixed anchor runs test whether the MLAAD-tiny ordering survives when
+MLAAD synthetic speech is paired with M-AILABS bona fide speech at full scale.
+All rows report the held-out test split after training/monitoring on the fixed
+70/15/15 protocol.
+
+| Date | Language split | Branch | Train / test | AUC | EER |
+| --- | --- | --- | ---: | ---: | ---: |
+| 2026-05-04 | English | cubical keep-low gate12 | `84000 / 18000` | 0.9418 | 0.1268 |
+| 2026-05-04 | English | Morse keep-low k4 | `84000 / 18000` | 0.9886 | 0.0303 |
+| 2026-05-05 | German | cubical keep-low gate12 | `30800 / 6600` | 0.8421 | 0.2406 |
+| 2026-05-05 | German | Morse keep-low k4 | `30800 / 6600` | 0.9468 | 0.1036 |
+| 2026-05-05 | English+German | cubical keep-low gate12 | `114800 / 24600` | 0.9012 | 0.1759 |
+| 2026-05-05 | English+German | Morse keep-low k4 | `114800 / 24600` | 0.9731 | 0.0533 |
+
+The MLAAD-tiny conclusion survives scale-up: Morse-Smale remains substantially
+stronger than cubical in English, German, and the combined language condition.
+German remains the hardest slice for both branches.
+
+### Full MLAAD English Morse Diagnostic
+
+The compact diagnostic was rerun against the full English dev split
+(`n=18000`) with the full English train split (`n=84000`).
+
+| Date | Morse representation | AUC | EER | Accuracy |
+| --- | --- | ---: | ---: | ---: |
+| 2026-05-06 | full reference | 0.9959 | 0.0195 | 0.9817 |
+| 2026-05-06 | gate off | 0.9902 | 0.0236 | 0.9793 |
+| 2026-05-06 | keep low | 0.9888 | 0.0276 | 0.9746 |
+| 2026-05-06 | basin fractions only | 0.9856 | 0.0308 | 0.9707 |
+| 2026-05-06 | counts + entropy only | 0.9721 | 0.0707 | 0.9322 |
+
+At full scale, the broad full-reference signature wins rather than gate-off.
+The structural conclusion still survives: basin fractions alone retain most of
+the full signature's performance, while counts and entropy are useful but
+incomplete.
+
+### Full-Scale Mixed-Source and In-the-Wild Matrix
+
+The operational source anchors use different train sizes: ASV-only uses the
+balanced ASVspoof train set (`n=5160`), MLAAD-only uses full English MLAAD
+(`n=84000`), and mixed uses all balanced ASV plus an equal-size balanced
+MLAAD sample (`n=10320` total). This is therefore a source-strategy
+comparison, not a clean train-size ablation.
+
+Each cell is `AUC / EER`.
+
+| Date | Train source | Branch | ASV2019 dev | ASV2021 LA | MLAAD English test | In-the-Wild |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| 2026-05-05 | ASV-only | cubical | `0.9763 / 0.0737` | `0.8368 / 0.2111` | `0.4718 / 0.5115` | `0.4468 / 0.5499` |
+| 2026-05-05 | ASV-only | Morse | `0.8929 / 0.1903` | `0.8390 / 0.2041` | `0.6132 / 0.4126` | `0.7417 / 0.3264` |
+| 2026-05-05 | MLAAD-only | cubical | `0.7245 / 0.3038` | `0.6806 / 0.3616` | `0.9418 / 0.1268` | `0.3067 / 0.6380` |
+| 2026-05-05 | MLAAD-only | Morse | `0.3992 / 0.5799` | `0.3761 / 0.6229` | `0.9886 / 0.0303` | `0.4577 / 0.5471` |
+| 2026-05-05 | mixed ASV+MLAAD | cubical | `0.9673 / 0.0934` | `0.8400 / 0.2176` | `0.8946 / 0.1824` | `0.4306 / 0.5544` |
+| 2026-05-05 | mixed ASV+MLAAD | Morse | `0.8833 / 0.1990` | `0.8480 / 0.2000` | `0.9760 / 0.0688` | `0.7389 / 0.3298` |
+
+The third-family target changes the conclusion. ASV-only Morse is the best
+In-the-Wild branch, narrowly ahead of mixed Morse. Both cubical branches fall
+below chance ranking on that target. MLAAD-only Morse is highly specialized
+and does not generalize back to ASV or onward to In-the-Wild.
+
+### Weighted Mixed-Source Morse
+
+The full-data weighted follow-up varies source composition while holding the
+Morse `keep_low_k4_norm_none` representation fixed. Each cell is
+`AUC / EER`.
+
+| Date | ASV / MLAAD mix | ASV2021 LA | MLAAD English test | In-the-Wild |
+| --- | ---: | ---: | ---: | ---: |
+| 2026-05-06 | 75 / 25 | `0.8405 / 0.2036` | `0.9539 / 0.1101` | `0.7363 / 0.3281` |
+| 2026-05-06 | 50 / 50 | `0.8417 / 0.2033` | `0.9710 / 0.0812` | `0.7306 / 0.3319` |
+| 2026-05-06 | 25 / 75 | `0.8356 / 0.2161` | `0.9791 / 0.0636` | `0.7128 / 0.3444` |
+
+Increasing the MLAAD share improves MLAAD as expected but degrades both
+ASV2021 and In-the-Wild. The 75/25 ASV-heavy mix is the best weighted
+In-the-Wild point, but it still does not beat ASV-only Morse
+(`AUC 0.7417`, `EER 0.3264`).
+
+### Classifier Throughput Control
+
+The classifier control reused the exact same cached cubical feature matrices
+(`84000 x 1680` train, `18000 x 1680` eval) and changed only SVC
+calibration/cache behavior.
+
+| Date | SVC setting | Fit time | Total fit+eval | AUC | EER |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2026-05-05 | probability on, 200 MB cache | 4 h 22 m 50 s | 4 h 46 m 12 s | 0.9396 | 0.1271 |
+| 2026-05-05 | probability off, 200 MB cache | 50 m 31 s | 1 h 13 m 36 s | 0.9396 | 0.1271 |
+| 2026-05-05 | probability off, 4 GB cache | 39 m 7 s | 1 h 2 m 49 s | 0.9396 | 0.1271 |
+
+Probability calibration was pure overhead for AUC/EER in this pipeline.
+These controls motivated the shipped `probability=False`,
+`decision_function` scoring, 8 GB cache default, and non-blocking classifier
+queue.
+
 ## Current Read
 
-- TDA-derived features contain strong signal for this task, and the cubical branch now performs at a competitive level on the current benchmark setup.
-- Raw accuracy on imbalanced train splits remains misleading; balanced protocols and held-out evaluation are required for credible comparison.
-- Field construction quality is now the dominant lever for cubical PH performance. In particular:
-  - `db` compression outperformed `log1p`, `root`, and `none`.
-  - Frame-energy gating (`~10-20%`) was the largest single gain.
-  - Disabling grid normalization helped once gating/compression were tuned.
-  - Slightly denser landscape vectorization (`layers=7`, `bins=120`) pushed CV below 10% EER.
-- Frequency-band ablations moved the current read from "full mel field is best" to "low mel band carries most of the useful topology." Keeping only the low band improved bounded CV to `AUC 0.974`, `EER 0.075`; dropping the low band caused a large collapse.
-- Full-dev held-out evaluation (`train n=1000`, full dev `n=24844`) confirmed the low-band gain: keep-low `AUC 0.966`, `EER 0.090` vs full-field reference `AUC 0.958`, `EER 0.103`.
-- Homology ablation indicates H1 carries most of the discriminative power. H0+H1 remains best in CV, but low-band H1-only is close on full dev (`AUC 0.965`, `EER 0.095`).
-- The bounded H2 curiosity pass on the same 2019 low-band holdout setup says the current homology story is already complete for this 2-D cubical pipeline: H2-only collapsed to chance (`AUC 0.500`, `EER 0.500`), and adding H2 left both H1-only and H0+H1 unchanged to four decimal places.
-- Full 2019 LA → 2021 LA transfer is materially weaker than the in-domain 2019 dev checks, but the low-band story survives. On the full 2021 LA eval set, keep-low gave the best AUC among the main transfer configs (`0.8298`), while keep-low H1 gave the best EER (`0.2116`).
-- The 2021 LA transfer follow-ups suggest only modest gains from small local retuning: gate12 lifted transfer AUC to `0.8329`, and keep-low H1 with `C=2` reduced transfer EER to `0.2100`.
-- The first DF smoke block ran cleanly, so the pipeline now has a verified path onto DF data. On the larger balanced DF `part00` subset (`n=5000`), low-band transfer remained the strongest family, and the follow-up sweep moved the winner to gate-off (`AUC 0.7984`, `EER 0.2658`). The tiny `C=2/4/8` check was effectively flat, so further DF tuning is not a priority.
-- The internal 2021 LA train/dev sweep says the low band still matters in-domain, but the exact winner shifts relative to the 2019-centered story: keep-low / gate10 gave the best EER (`0.1096`), gate-off gave the best AUC (`0.9591`), H1-only no longer wins, and H0-only remains much weaker.
-- Across all four settings, the broad family conclusion still holds: low-band cubical structure is the most reliable motif, but the exact best gate / homology balance depends on domain. 2019 LA favors low-band strongly, 2021 LA transfer still benefits from low-band/H1 tweaks, 2021 LA in-domain prefers low-band with full H0+H1, and DF transfer prefers low-band with gate-off.
-- The recent Morse-Smale controls say the earlier apparent discrepancy was mostly protocol, not branch failure. When the older local Morse config is rerun on the stricter `train n=1000 -> dev n=5000` holdout protocol, it falls to `AUC 0.8502`, `EER 0.2350`; the newer matched keep-low Morse branch improves that to `AUC 0.8645`, `EER 0.2212`.
-- The bounded Morse-Smale keep-low sweep surfaced one clearly better operating point: `graph_max_neighbors=4`, `normalization=None`, `simplification=difference`, with `AUC 0.8723`, `EER 0.2094` on the bounded holdout protocol.
-- In the tested Morse-Smale neighborhood sweep, `k=8/12/16` were effectively identical and `feature` normalization was usually neutral-to-harmful. The only strong movement came from `k=4`, where `normalization=None` helped and `normalization=feature` collapsed badly.
-- Morse-Smale now looks like a serious transfer branch. On full `2019 -> 2021 LA`, Morse keep-low reached `AUC 0.8381`, `EER 0.2080`, which is slightly better than the current best cubical transfer branch by both AUC and EER.
-- On bounded `2019 -> 2021 DF`, Morse-Smale still looks weaker in absolute target performance than cubical, even though its source-to-target degradation appears smaller. So the current evidence supports “more transfer-stable” more strongly than “universally better.”
-- The topology-only neural pass shows that the current topological vectors still have nonlinear headroom. Both neural heads beat the linear topology baseline on 2019 dev, 2021 LA transfer, and bounded DF transfer.
-- The staged MLP supports the robust-core-first hypothesis at the representation level. Its transfer ablations depend most on the low-band `H1` core, while the flat MLP and linear baseline lean more on the broader full-field auxiliary block.
-- The staged MLP is the best topology-only neural head tested so far, but it has not yet beaten the strongest tuned classical cubical transfer branch. For example, the best classical 2021 LA transfer result remains keep-low + gate12 by AUC (`0.8329`) and keep-low H1 + `C=2` by EER (`0.2100`), both ahead of the staged MLP (`0.8275`, `0.2240`).
-- The Takens branch shows real but clearly secondary signal. Low-band waveform embeddings beat low-band envelopes, but even the best bounded Takens result (`AUC 0.687`, `EER 0.364`) remains far behind both cubical and Morse-Smale.
-- MLAAD changes the structure story substantially. On MLAAD-tiny English, cubical remains viable (`AUC 0.9281`, `EER 0.1566`), but Morse-Smale is dramatically better (`AUC 0.9864`, `EER 0.0357`), and that margin persists on German and English+German.
-- The MLAAD diagnostic ablations suggest cubical and Morse are exploiting genuinely different structures. On MLAAD, cubical does not need the classic ASVspoof low-band keep recipe: `drop_low` is as good as or better than `keep_low`, and `gate_off` consistently hurts. By contrast, Morse stays strong under broad-field settings, and `gate_off` is often neutral or helpful.
-- Within the Morse signature, `basin_fractions` is the strongest compact subset on MLAAD, `counts_entropy` is useful but incomplete, `merge_sequence` is much weaker, and `extrema_values` are close to noise. So the current Morse advantage on MLAAD appears to come from basin / partition geometry rather than raw extrema values.
-- The MLAAD sample-level explanation pass matches the aggregate read: there are bona fide English MLAAD samples that every cubical variant still calls fake while multiple Morse variants classify them correctly with high confidence.
-- Mixed-source training reveals a useful asymmetry reduction pattern. For cubical, mixed ASV+MLAAD training mainly creates a compromise model: it rescues MLAAD strongly while only modestly degrading ASV, but it does not beat the source-specialized model on either domain. For Morse, mixed training is more interesting: it dramatically reduces the `MLAAD-only -> ASV` collapse and gives the best `ASV2021 LA` result in the mixed-source matrix (`AUC 0.8423`, `EER 0.2009`).
-- Best current “balanced robustness” point from the mixed-source matrix is mixed-source Morse-Smale: it remains strong on MLAAD English (`AUC 0.9757`, `EER 0.0681`) while becoming much less brittle on ASV2019 dev (`AUC 0.8659`, `EER 0.2171`) and slightly improving over ASV-only Morse on `ASV2021 LA`.
-- Best cubical-only bounded CV result so far: low-band cubical field, `AUC 0.974`, `EER 0.075` (`n=1000`, balanced train CV).
-- Best held-out train→dev result so far: low-band cubical field, `AUC 0.966`, `EER 0.090` (`train n=1000`, full dev `n=24844`).
-- Best Morse-Smale bounded holdout result so far: keep-low, `graph_max_neighbors=4`, `normalization=None`, `AUC 0.8723`, `EER 0.2094` (`2019 train n=1000 -> balanced 2019 dev n=5000`).
-- Best Morse-Smale `2021 LA` transfer result so far: mixed-source English training, `AUC 0.8423`, `EER 0.2009`; best pure `ASV2019 -> 2021 LA` Morse result remains keep-low, `AUC 0.8381`, `EER 0.2080`.
-- Best Morse-Smale MLAAD English in-domain result so far: full-reference / gate-off family on MLAAD English, with the strongest measured point at `gate_off` in the diagnostic block (`AUC 0.9888`, `EER 0.0297`).
-- Best mixed-source result so far: Morse-Smale mixed-source training on `ASV2021 LA` (`AUC 0.8423`, `EER 0.2009`) and strong retained MLAAD English performance (`AUC 0.9757`, `EER 0.0681`).
-- Best topology-only neural result so far: staged MLP, `2019 dev AUC 0.9751`, `EER 0.0784`; `2021 LA transfer AUC 0.8275`, `EER 0.2240`; bounded `2021 DF transfer AUC 0.7897`, `EER 0.2730`.
-- Nonzero H0/H1 reweighting has little effect when `StandardScaler` is enabled (expected, because block scaling is normalized away). Disabling scaling made weighting active but degraded performance in this pipeline.
+- Balanced protocols and held-out evaluation are essential. Accuracy on the
+  original imbalanced ASVspoof splits can obscure weak ranking behavior.
+- Cubical field construction is the main ASVspoof lever: dB compression,
+  light Gaussian smoothing, frame-energy gating, no grid normalization, and a
+  low-band mask produced the strongest 2019 results.
+- The best cubical-only bounded 2019 CV point is AUC `0.974` / EER
+  `0.075`; the best bounded-train to full-dev point is AUC `0.966` / EER
+  `0.090`.
+- On ASVspoof, `H1` carries most of the useful low-band signal. `H2` is
+  chance alone and does not change `H1` or `H0+H1` performance.
+- Exact 2019-to-2021 transfer is weaker than in-domain performance, but both
+  low-band cubical and Morse remain useful. Under the full-source matrix,
+  ASV-only Morse slightly beats ASV-only cubical on ASV2021
+  (`0.8390 / 0.2041` vs `0.8368 / 0.2111` AUC/EER).
+- Morse-Smale is not the strongest ASV2019 in-domain branch. Its value is
+  transfer retention and its much stronger alignment with MLAAD-style data.
+- Full MLAAD confirms the tiny-set result. Morse test EER is `0.0303` on
+  English, `0.1036` on German, and `0.0533` on English+German, materially
+  below the matched cubical anchor in every case.
+- The full English MLAAD diagnostic sharpens the morphology story:
+  full-reference Morse is best on dev (`AUC 0.9959`, `EER 0.0195`), while
+  basin fractions alone retain most of the signal
+  (`AUC 0.9856`, `EER 0.0308`).
+- Mixed-source Morse is the best balanced ASV2021/MLAAD branch in the
+  full-scale matrix: ASV2021 `AUC 0.8480`, `EER 0.2000`; MLAAD English
+  `AUC 0.9760`, `EER 0.0688`.
+- In-the-Wild remains a hard out-of-family target. ASV-only Morse is best
+  (`AUC 0.7417`, `EER 0.3264`), mixed Morse is nearly tied, and all tested
+  cubical source strategies rank at or below chance.
+- The weighted Morse study shows a smooth specialization tradeoff. More MLAAD
+  improves MLAAD but hurts ASV2021 and In-the-Wild; no weighted mixture beats
+  ASV-only Morse on In-the-Wild.
+- The staged topology-only MLP demonstrates nonlinear headroom and shifts
+  feature dependence toward the low-band `H1` core, but it does not beat the
+  strongest tuned classical transfer branch.
+- Takens low-band waveform topology is above noise but remains secondary
+  (best bounded AUC `0.687`, EER `0.364`).
+- The classifier queue and uncalibrated SVC default reduce wasted wall time
+  without changing AUC/EER. On the full MLAAD control, total classifier time
+  fell from 4 h 46 m to 1 h 3 m before the queue-level concurrency gain.
+- The evidence supports dataset-dependent topology selection, not a universal
+  winner: cubical is ASV-specialized, Morse is MLAAD-aligned and more robust to
+  the tested third-family shift, and source mixing trades specialization for
+  balance.
 
 ## Next Runs
 
-1. Persist the scratch MLAAD and mixed-source artifacts from `/tmp` into a reproducible local results location, then update any downstream tables/figures from those saved copies rather than the transient scratch paths.
-2. Extend the mixed-source matrix to MLAAD German and MLAAD English+German held-out targets so the current English-only mixed-source conclusion is tested against the same language-shift axes that made the original MLAAD transfer story asymmetric.
-3. Run one focused mixed-source follow-up for Morse-Smale with the strongest MLAAD diagnostic structural subset (`basin_fractions`) to test whether the mixed-source gain is still present when the representation is simplified.
-4. Promote the internal 2021 LA winner(s) from the current dev sweep to the held-out internal test split, keeping the "research-only internal split" disclaimer explicit.
-5. Repeat the topology-only neural comparison across 2-3 train seeds and, if runtime permits, a larger 2019 train budget, so the staged-vs-flat result is not resting on one `n=1000` seed.
-6. Treat the H2 question as provisionally closed for this 2-D cubical pipeline unless a future 3-D / multi-channel field representation changes the topological dimensionality.
+1. Run a size-matched, multi-seed source-mixture study so source composition
+   can be separated from the current `5160` / `84000` / `10320` train-size
+   difference.
+2. Complete score-level cubical/Morse fusion using a calibration split that is
+   disjoint from every reported target, then compare it with branch selection.
+3. Promote the full-MLAAD diagnostic winner and compact basin-fraction branch
+   from dev to the untouched test split.
+4. Add source-confound controls for the full MLAAD binary construction,
+   especially recording conditions and bona fide corpus identity.
+5. Evaluate mixed-source and weighted Morse models on the full MLAAD German
+   and English+German test targets.
+6. Repeat the topology-only neural comparison across multiple train seeds and
+   a larger ASVspoof training budget.
+7. Treat `H2` as closed for the current 2-D cubical representation unless a
+   future multi-channel field changes the dimensionality of the complex.
